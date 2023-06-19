@@ -1,0 +1,59 @@
+#!/bin/bash
+
+export RETRYONFAIL=1
+. .demoscript
+
+clear
+set -e
+
+comment "Simple (non-ingress) ACA App"
+doit cat acaApp.json
+comment "This is the same JSON as Azure REST API, with 2 extra fields at top"
+
+comment "Use azd to apply (deploy) it"
+doit azd apply acaApp.json
+
+comment "Check its status"
+doit azd get acaApp.json
+
+comment "Can use this for any Azure resource, try Redis Cache"
+doit cat redis.json
+doit azd apply redis.json
+
+comment "We can reapply the same ACA file and it'll be idempotent"
+doit azd apply acaApp.json
+
+comment "We can delete the app too"
+doit azd delete acaApp.json
+
+comment "Now let's deploy an ACA dev-mode Redis"
+doit cat acaRedis.json
+doit azd apply acaRedis.json
+
+comment "Now we can redeploy the app but this time include bindings & ingress"
+doit cat acaAppBind.json
+doit azd apply acaAppBind.json
+
+comment "Check status"
+doit azd get acaRedis.json acaAppBind.json
+
+comment "Curl the app to prove the env vars were injected"
+doit curl -s "http://poc.orangetree-90dcdba8.eastus.azurecontainerapps.io?envs"
+
+comment "We can also combine files"
+doit cat one.json
+doit azd apply one.json
+
+comment "Or use references/includes"
+doit cat ref.json
+doit azd apply ref.json
+
+comment "Or use http refs to the json"
+doit curl -s https://raw.githubusercontent.com/duglin/myazd/master/ref.json
+doit azd apply https://raw.githubusercontent.com/duglin/myazd/master/ref.json
+
+comment "Now delete them both"
+doit azd delete one.json
+
+comment "Check status"
+doit azd get one.json

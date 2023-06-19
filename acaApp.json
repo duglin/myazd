@@ -1,0 +1,17 @@
+{
+  "type": "ACA.App",
+  "name": "poc",
+
+  "location": "eastus",
+  "properties": {
+    "environmentId": "${ENVIRONMENT}",
+    "template": {
+      "containers": [
+        {
+          "image": "duglin/echo",
+          "name": "echo"
+        }
+      ]
+    }
+  }
+}

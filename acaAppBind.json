@@ -1,0 +1,30 @@
+{
+  "type": "ACA.App",
+  "name": "poc",
+
+  "location": "eastus",
+  "properties": {
+    "environmentId": "${ENVIRONMENT}",
+    "configuration": {
+      "ingress": {
+        "allowInsecure": true,
+        "external": true,
+        "targetPort": 8080
+      }
+    },
+    "template": {
+      "containers": [
+        {
+          "image": "duglin/echo",
+          "name": "echo"
+        }
+      ],
+      "serviceBinds": [
+        {
+          "serviceId": "/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerapps/pocredis",
+          "name": "pocredis"
+        }
+      ]
+    }
+  }
+}

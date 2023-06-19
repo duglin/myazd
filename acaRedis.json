@@ -1,0 +1,14 @@
+{
+  "type": "ACA.App",
+  "name": "pocredis" ,
+
+  "location": "eastus",
+  "properties": {
+    "environmentId": "${ENVIRONMENT}",
+    "configuration": {
+      "service": {
+        "type": "redis"
+      }
+    }
+  }
+}

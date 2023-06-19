@@ -1,0 +1,13 @@
+{
+  "type": "Redis",
+  "name": "azdRedis",
+
+  "location": "eastus",
+  "properties": {
+    "sku": {
+      "name": "Basic",
+      "family": "C",
+      "capacity": 1
+    }
+  }
+}
