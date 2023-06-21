@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	// "log"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/itchyny/gojq"
 	"github.com/spf13/cobra"
 )
 
@@ -24,14 +26,41 @@ var Subscription string = ""
 var ResourceGroup = ""
 var TabWriter = tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 
+var logIndentSpace = ""
+
 func Log(depth int, format string, args ...interface{}) {
+	outdent := false
+
 	if depth > Verbose {
 		return
 	}
+
+	if len(format) > 0 && format[0] == '<' && len(logIndentSpace) > 1 {
+		logIndentSpace = logIndentSpace[:len(logIndentSpace)-2]
+		format = format[1:]
+
+		// Log(X, "<") means just outdent, don't print anything
+		// If you want a blank line add a space after the "<"
+		if format == "" {
+			return
+		}
+	}
+
+	if len(format) > 0 && format[0] == '>' {
+		outdent = true
+		format = format[1:]
+	}
+
 	if !strings.HasSuffix(format, "\n") {
 		format += "\n"
 	}
-	fmt.Fprintf(os.Stderr, format, args...)
+
+	fmt.Fprintf(os.Stderr, logIndentSpace+format, args...)
+
+	if outdent {
+		logIndentSpace += "| "
+	}
+
 }
 
 func ErrStop(format string, args ...interface{}) {
@@ -42,8 +71,23 @@ func ErrStop(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
+func readJsonFile(file string) ([]byte, error) {
+	var data []byte
+	var err error
+	if file == "" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(file)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return JsonCDecode(data)
+}
+
 func loadProperties() {
-	data, err := os.ReadFile(PropFile)
+	data, err := readJsonFile(PropFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return
@@ -105,13 +149,13 @@ func setupCmds() *cobra.Command {
 	rootCmd.PersistentFlags().IntVarP(&Verbose, "verbose", "v", 1,
 		"Verbose value")
 
-	applyCmd := &cobra.Command{
-		Use:   "apply",
-		Short: "Apply resource file",
+	addCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Process a resource file",
 		Run:   CRUDFunc,
 	}
-	applyCmd.Flags().StringArrayP("file", "f", nil, "List of resource files")
-	rootCmd.AddCommand(applyCmd)
+	addCmd.Flags().StringArrayP("file", "f", nil, "List of resource files")
+	rootCmd.AddCommand(addCmd)
 
 	deleteCmd := &cobra.Command{
 		Use:   "delete",
@@ -133,96 +177,189 @@ func setupCmds() *cobra.Command {
 }
 
 type ResourceDef struct {
+	Type     string
 	URL      string
 	Defaults map[string]string
 }
 
+var ResourceAliases = map[string]string{
+	"App":   "Microsoft.App/containerApps",
+	"Redis": "Microsoft.Cache/redis",
+}
+
 var Resources = map[string]*ResourceDef{
-	"ACA.App": &ResourceDef{
-		URL: "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerApps/${NAME}?api-version=${APIVERSION}",
+	"Microsoft.App/containerApps": &ResourceDef{
+		Type: "Microsoft.App/containerApps",
+		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerApps/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
 			"APIVERSION": "2022-11-01-preview",
 		},
 	},
-	"Redis": &ResourceDef{
-		URL: "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.Cache/redis/${NAME}?api-version=${APIVERSION}",
+	"Microsoft.Cache/redis": &ResourceDef{
+		Type: "Microsoft.Cache/redis",
+		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.Cache/redis/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
 			"APIVERSION": "2023-04-01",
 		},
 	},
 }
 
+func getResourceDef(resType string) *ResourceDef {
+	tmp, ok := ResourceAliases[resType]
+	if ok {
+		resType = tmp
+	}
+	return Resources[resType]
+}
+
+func parseVariable() {
+	re := regexp.MustCompile(`\${(?:(?:(?:(.*):)?(.*):)?([^@}]+)(?:@([^/}]*))?/)?([^\.}]+)(?:\.([^}]+))?}`)
+	// re := regexp.MustCompile(`\${(?:(?:(?:(.*):)?(.*):)?([^@]+)(?:@([^/]*))?/)?([^.]+)(?:\.([^}]+))?}`)
+	// re := regexp.MustCompile(`\${\s*(?:(?:(.*):)?(.*):)?([^@]+)(@[^/]*)?/([^.]+)(\.[^}]+)?\s*}`)
+
+	//    re := regexp.MustCompile(`\${\s*([^:]*:)?([^:]*:)?([^@]+)(@[^/]*)?/([^.]+)(\.[^}]+)?\s*}`)
+	//	re := regexp.MustCompile(`\${\s*((([^:]*):([^:]*):)|([^:]*:))?([^@]+)(@[^/]*)?/([^.]+)(\.[^}]+)?\s*}`)
+	fmt.Printf("%q\n", re.FindStringSubmatch("${sub:rg:Microsoft.Apps/containerapps@ver/qwe.e.r.f}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${rg:Microsoft.Apps/containerapps@ver/qwe.e.r.f}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${Microsoft.Apps/containerapps@ver/qwe.e.r.f}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${Microsoft.Apps/containerapps/qwe.e.r.f}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${Microsoft.Apps/containerapps/qwe}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${App/qwe}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${sub:rg:App@ver/qwe.e.r.f}"))
+	fmt.Printf("%q\n", re.FindStringSubmatch("${rg:App@ver/qwe.e.r.f}"))
+
+	fmt.Println(re.FindAllStringSubmatchIndex("hello ${rg:App@ver/qwe.e.r.f} world", -1))
+	fmt.Println(re.FindAllStringSubmatchIndex("hello ${NAME} world", -1))
+}
+
 // Sub recursive history
 var history = map[string]bool{}
 
-func doSubs(str string, props map[string]string) string {
+func newDoSubs(str string, props map[string]string) string {
+	re := regexp.MustCompile(`\${(?:(?:(?:(.*):)?(.*):)?([^@}]+)(?:@([^/}]*))?/)?([^\.}]+)(?:\.([^}]+))?}`)
+	indexes := re.FindAllStringSubmatchIndex(str, -1)
+	nextIndex := 0
+	pos := 0
 	result := strings.Builder{}
 
-	// action: 0=add to result
-	// action: 1=add to varName
-	// action: 2=add to varName, do subs
-	// action: 3=add varName to result
-	stateTable := [][]int{
-		// ACTION/NextState
-		//     $   {   }  else
-		[]int{11, 00, 00, 00}, // row 0 - default state, not in var
-		[]int{30, 12, 30, 11}, // row 1 - seen $
-		[]int{30, 30, 20, 12}, // row 2 - seen ${, in var
-	}
+	Log(4, ">SUB OLD: %s\n", str)
 
-	row := 0
-	col := 0
-	varName := strings.Builder{}
-	for _, ch := range str {
-		switch ch {
-		case '$':
-			col = 0
-		case '{':
-			col = 1
-		case '}':
-			col = 2
-		default:
-			col = 3
+	for {
+		if nextIndex >= len(indexes) {
+			result.WriteString(str[pos:])
+			break
 		}
 
-		state := stateTable[row][col]
-		row = state % 10
-		switch int(state / 10) {
-		case 0:
-			result.WriteRune(ch)
-		case 1:
-			varName.WriteRune(ch)
-		case 2:
-			v := strings.ToUpper(varName.String()[2:])
-			value := props[v]
-			if history[v] == true {
-				ErrStop("Recurive variable substitution: %s", v)
+		index := indexes[nextIndex]
+		result.WriteString(str[pos:index[0]]) // save up to the $
+		pos = index[1]                        // skip to char after ${...}
+
+		sub := extract(str, index[2], index[3])
+		rg := extract(str, index[4], index[5])
+		resType := extract(str, index[6], index[7])
+		apiVer := extract(str, index[8], index[9])
+		resName := extract(str, index[10], index[11])
+		prop := extract(str, index[12], index[13])
+
+		Log(4, "%s -> sub(%s) rg(%s) type(%s) api(%s) name(%s) prop(%s)\n",
+			str[index[0]:index[1]], sub, rg, resType, apiVer, resName, prop)
+
+		if resType == "" {
+			// Simple ${NAME}
+			varName := strings.ToUpper(resName)
+			if history[varName] == true {
+				ErrStop("Recurive variable substitution: %s", varName)
 			}
-			history[v] = true
-			value = doSubs(value, props)
-			delete(history, v)
+			value := props[varName]
+			history[varName] = true
+			Log(4, "Var: %s -> %s", varName, value)
+			value = newDoSubs(value, props)
+			delete(history, varName)
 
-			// fmt.Printf("VAR: %s -> %s\n", v, value)
 			result.WriteString(value)
-			varName.Reset()
-		case 3:
-			varName.WriteRune(ch)
-			result.WriteString(varName.String())
-			varName.Reset()
+		} else {
+			res := getResourceDef(resType)
+			if apiVer == "" {
+				apiVer = res.Defaults["APIVERSION"]
+				if apiVer == "" {
+					ErrStop("Can't determine apiVersion for %q", resType)
+				}
+			}
+
+			data, err := downloadResource(props["SUBSCRIPTION"],
+				props["RESOURCEGROUP"],
+				res.Type, resName,
+				"2022-11-01-preview")
+			if err != nil {
+				ErrStop("Error downloading resource(%s/%s): %s", res.Type,
+					resName, err)
+			}
+
+			Log(4, "Prop: .%s", prop)
+			query, err := gojq.Parse("." + prop)
+			if err != nil {
+				ErrStop("Error in prop(%s): %s", prop, err)
+			}
+
+			daJson := map[string]any{}
+			err = json.Unmarshal(data, &daJson)
+			if err != nil {
+				ErrStop("Error in parsing resource: %s", err)
+			}
+
+			iter := query.Run(daJson)
+			value, ok := iter.Next()
+			if !ok {
+				ErrStop("Can't find value for %q", prop)
+			}
+			Log(4, "Value: %s", value)
+
+			// result.WriteString(fmt.Sprintf("%s/%s.%s", res.Type, resName, prop))
+			result.WriteString(fmt.Sprintf("%v", value))
 		}
-	}
-	if varName.Len() > 0 {
-		result.WriteString(varName.String())
+
+		nextIndex++
 	}
 
-	Log(4, "\nOLD: %s\nNEW: %s", str, result.String())
+	Log(4, "<SUB NEW: %s", result.String())
+
 	return result.String()
+}
+
+func extract(str string, start int, end int) string {
+	if start == -1 || end == -1 {
+		return ""
+	}
+	return str[start:end]
+}
+
+func downloadResource(sub, rg, resType, resName, api string) ([]byte, error) {
+	Log(2, "Download: %s/%s/%s/%s@%s", sub, rg, resType, resName, api)
+	res := getResourceDef(resType)
+	props := map[string]string{
+		"SUBSCRIPTION":  sub,
+		"RESOURCEGROUP": rg,
+		"APIVERSION":    api,
+		"NAME":          resName,
+	}
+	resURL := newDoSubs(res.URL, props)
+
+	httpRes := doHTTP("GET", resURL, nil)
+	if httpRes.StatusCode == 404 {
+		return nil, nil
+	}
+
+	if httpRes.ErrorMessage != "" {
+		return nil, fmt.Errorf(httpRes.ErrorMessage)
+	}
+
+	return httpRes.Body, nil
 }
 
 func readIncludeFile(baseFile string, inc string) ([]byte, error) {
 	file := ""
 	if baseFile == "-" {
-		return os.ReadFile(inc)
+		return readJsonFile(inc)
 	} else if strings.HasPrefix(baseFile, "http") {
 		daURL, _ := url.Parse(baseFile)
 		path := daURL.Path
@@ -246,12 +383,12 @@ func readIncludeFile(baseFile string, inc string) ([]byte, error) {
 	} else {
 		i := strings.LastIndex(baseFile, fmt.Sprintf("%c", os.PathSeparator))
 		if i == -1 {
-			return os.ReadFile(inc)
+			return readJsonFile(inc)
 		}
-		return os.ReadFile(baseFile[:i+1] + inc)
+		return readJsonFile(baseFile[:i+1] + inc)
 	}
 
-	return os.ReadFile(file)
+	return readJsonFile(file)
 }
 
 func CRUDFunc(cmd *cobra.Command, args []string) {
@@ -281,7 +418,7 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 		data := []byte{}
 
 		if file == "-" {
-			data, err = io.ReadAll(os.Stdin)
+			data, err = readJsonFile("")
 			if err != nil {
 				ErrStop("Error reading from stdin: %s", err)
 			}
@@ -297,16 +434,21 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 					string(body))
 			}
 			data = body
+			data, err = JsonCDecode(data)
+			if err != nil {
+				ErrStop(err.Error())
+			}
 			Properties["file"] = file
 		} else {
 			Log(2, "Loading %q", file)
-			data, err = os.ReadFile(file)
+			data, err = readJsonFile(file)
 			if err != nil {
 				if os.IsNotExist(err) {
 					ErrStop("Can't find resource file: %s\n", file)
 				}
 				ErrStop("Error reading file %s: %s", file, err)
 			}
+			data, _ = JsonCDecode(data)
 
 			Properties["file"] = file
 		}
@@ -372,8 +514,8 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 
 		// Now iterate over the array and process each resource, stop on err
 		for _, res := range resources {
-			if cmd.Use == "apply" {
-				err = applyResource(res)
+			if cmd.Use == "add" {
+				err = addResource(res)
 			} else if cmd.Use == "delete" {
 				err = deleteResource(res)
 			} else if cmd.Use == "get" {
@@ -411,7 +553,7 @@ func getAttribute(res map[string]json.RawMessage, attr string, props map[string]
 	return value
 }
 
-func applyResource(res map[string]json.RawMessage) error {
+func addResource(res map[string]json.RawMessage) error {
 	// Make local copy of Properties
 	props := map[string]string{}
 	for k, v := range Properties {
@@ -421,7 +563,8 @@ func applyResource(res map[string]json.RawMessage) error {
 	resType := getAttribute(res, "type", props)
 
 	Log(3, "resType: %s", resType)
-	resDef := Resources[resType]
+
+	resDef := getResourceDef(resType)
 	resURL := resDef.URL
 	for k, v := range props {
 		Log(3, "props[%s]=%q", k, v)
@@ -438,10 +581,10 @@ func applyResource(res map[string]json.RawMessage) error {
 		getAttribute(res, "apiversion", props)
 
 		data, _ := json.MarshalIndent(res, "", "  ")
-		data = []byte(doSubs(string(data), props))
-		resURL = doSubs(resURL, props)
+		data = []byte(newDoSubs(string(data), props))
+		resURL = newDoSubs(resURL, props)
 
-		Log(1, "Applying: %s/%s (%s)", resType, resName, props["file"])
+		Log(1, "Adding: %s/%s (%s)", resType, resName, props["file"])
 		httpRes := doHTTP("PUT", resURL, data)
 		if httpRes.ErrorMessage != "" {
 			ErrStop(httpRes.ErrorMessage)
@@ -463,7 +606,7 @@ func deleteResource(res map[string]json.RawMessage) error {
 	resType := getAttribute(res, "type", props)
 
 	Log(3, "resType: %s", resType)
-	resDef := Resources[resType]
+	resDef := getResourceDef(resType)
 	resURL := resDef.URL
 	for k, v := range props {
 		Log(3, "props[%s]=%q", k, v)
@@ -480,8 +623,8 @@ func deleteResource(res map[string]json.RawMessage) error {
 		getAttribute(res, "apiversion", props)
 
 		data, _ := json.MarshalIndent(res, "", "  ")
-		data = []byte(doSubs(string(data), props))
-		resURL = doSubs(resURL, props)
+		data = []byte(newDoSubs(string(data), props))
+		resURL = newDoSubs(resURL, props)
 
 		Log(1, "Deleting: %s/%s (%s)", resType, resName, props["file"])
 		httpRes := doHTTP("DELETE", resURL, nil) // data)
@@ -505,7 +648,7 @@ func getResource(res map[string]json.RawMessage) error {
 	resType := getAttribute(res, "type", props)
 
 	Log(3, "resType: %s", resType)
-	resDef := Resources[resType]
+	resDef := getResourceDef(resType)
 	resURL := resDef.URL
 	for k, v := range props {
 		Log(3, "props[%s]=%q", k, v)
@@ -521,9 +664,9 @@ func getResource(res map[string]json.RawMessage) error {
 		getAttribute(res, "subscription", props)
 		getAttribute(res, "apiversion", props)
 
-		data, _ := json.MarshalIndent(res, "", "  ")
-		data = []byte(doSubs(string(data), props))
-		resURL = doSubs(resURL, props)
+		// data, _ := json.MarshalIndent(res, "", "  ")
+		// data = []byte(newDoSubs(string(data), props))
+		resURL = newDoSubs(resURL, props)
 
 		Log(2, "Getting: %s/%s (%s)", resType, resName, props["file"])
 		httpRes := doHTTP("GET", resURL, nil)
@@ -585,7 +728,8 @@ func doHTTP(verb string, URL string, data []byte) *HTTPResponse {
 	req.Header.Add("Authorization", "Bearer "+Token)
 	req.Header.Add("Content-Type", "application/json")
 
-	Log(2, "%s %s", verb, URL)
+	Log(2, ">%s %s", verb, URL)
+	defer Log(2, "<")
 	if len(data) > 0 {
 		Log(2, "Data:\n%s", string(data))
 	} else {

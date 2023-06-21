@@ -1,5 +1,5 @@
 {
-  "type": "ACA.App",
+  "type": "App",
   "name": "poc",
 
   "location": "eastus",
@@ -21,7 +21,14 @@
       ],
       "serviceBinds": [
         {
-          "serviceId": "/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerapps/pocredis",
+		  // ${ [[sub:]rg:]Microsoft.App/containerapps@APIVERSION/NAME.PROP 
+		  //
+		  // ${ [[sub:]rg:]type[@api]/name.prop }
+		  // GET /subscriptions/$sub/resourceGroup/$rg/providers/$type/$name
+          // "serviceId": "${App/pocredis.id}",
+          // "serviceId": "/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerapps/pocredis",
+          // "serviceId": "${Microsoft.App/containerapps/pocredis.id}",
+          "serviceId": "${App/pocredis.id}",
           "name": "pocredis"
         }
       ]

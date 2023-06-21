@@ -1,6 +1,6 @@
 [
   {
-    "type": "ACA.App",
+    "type": "App",
     "name": "pocredis",
 
     "location": "eastus",
@@ -15,7 +15,7 @@
   },
 
   {
-    "type": "ACA.App",
+    "type": "App",
     "name": "poc",
 
     "location": "eastus",
