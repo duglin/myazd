@@ -1,0 +1,17 @@
+{
+  "type": "DBAccount",
+  "name": "dugsdbaccount",
+
+  "location": "eastus",
+  "properties": {
+    "databaseAccountOfferType": "Standard",
+    "locations": [
+      {
+        "failoverPriority": 0,
+        "locationName": "southcentralus",
+        "isZoneRedundant": false
+      }
+    ],
+    "createMode": "Default"
+  }
+}

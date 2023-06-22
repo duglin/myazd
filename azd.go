@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"time"
 	// "log"
 	"net/http"
 	"net/url"
@@ -22,45 +23,183 @@ var Verbose = 1
 var PropFile = "azd.config"
 var Properties map[string]string = map[string]string{}
 var Token string = ""
-var Subscription string = ""
-var ResourceGroup = ""
-var TabWriter = tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
+var TabWriter = tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
-var logIndentSpace = ""
+type Resource struct {
+	Subscription  string
+	ResourceGroup string
+	Type          string
+	Name          string
+	ApiVersion    string
 
-func Log(depth int, format string, args ...interface{}) {
-	outdent := false
+	FromFile   string // filename, URL or stdin(-)
+	FromServer bool
 
-	if depth > Verbose {
-		return
+	RawData  []byte
+	FullJson map[string]json.RawMessage // Json + extra attrs (sub,rg,type,name)
+	Json     map[string]json.RawMessage
+
+	DependsOn []string // [[sub:]rg:]type/name[@api]
+}
+
+func NewResource() *Resource {
+	return &Resource{
+		Subscription:  Properties["SUBSCRIPTION"],
+		ResourceGroup: Properties["RESOURCEGROUP"],
+	}
+}
+
+func NewResourceFromFile(file string) (*Resource, error) {
+	r := NewResource()
+
+	if err := r.LoadFromFile(file); err != nil {
+		return nil, err
 	}
 
-	if len(format) > 0 && format[0] == '<' && len(logIndentSpace) > 1 {
-		logIndentSpace = logIndentSpace[:len(logIndentSpace)-2]
-		format = format[1:]
+	return r, nil
+}
 
-		// Log(X, "<") means just outdent, don't print anything
-		// If you want a blank line add a space after the "<"
-		if format == "" {
-			return
+func NewResourceFromServer(sub, rg, typ, name, api string) (*Resource, error) {
+	r := &Resource{
+		Subscription:  sub,
+		ResourceGroup: rg,
+		Type:          typ,
+		Name:          name,
+		ApiVersion:    api,
+	}
+
+	if err := r.LoadFromServer(); err != nil {
+		return nil, err
+	}
+
+	return r, nil
+}
+
+func (r *Resource) LoadFromServer() error {
+	Log(2, "Downloading: %s/%s/%s/%s@%s",
+		r.Subscription, r.ResourceGroup, r.Type, r.Name, r.ApiVersion)
+
+	resDef := getResourceDef(r.Type)
+	if resDef == nil {
+		return fmt.Errorf("Unknown resource type: %s", r.Type)
+	}
+
+	if r.Subscription == "" {
+		r.Subscription = Properties["SUBSCRIPTION"]
+	}
+
+	if r.ResourceGroup == "" {
+		r.ResourceGroup = Properties["RESOURCEGROUP"]
+	}
+
+	if r.ApiVersion == "" {
+		r.ApiVersion = resDef.Defaults["APIVERSION"]
+	}
+
+	props := map[string]string{
+		"SUBSCRIPTION":  r.Subscription,
+		"RESOURCEGROUP": r.ResourceGroup,
+		"NAME":          r.Name,
+		"APIVERSION":    r.ApiVersion,
+	}
+	resURL := newDoSubs(resDef.URL, props)
+
+	httpRes := doHTTP("GET", resURL, nil)
+	if httpRes.StatusCode == 404 {
+		return nil
+	}
+
+	if httpRes.ErrorMessage != "" {
+		return fmt.Errorf(httpRes.ErrorMessage)
+	}
+
+	r.FromServer = true
+
+	return r.LoadFromBytes(httpRes.Body)
+}
+
+func (r *Resource) LoadFromFile(file string) error {
+	rawData, err := readJsonFile(file)
+	if err != nil {
+		return err
+	}
+
+	r.FromFile = file
+	return r.LoadFromBytes(rawData)
+}
+
+func (r *Resource) LoadFromBytes(incoming []byte) error {
+	r.RawData = incoming
+
+	rawJson := map[string]json.RawMessage{}
+	if err := json.Unmarshal(incoming, &rawJson); err != nil {
+		return err
+	}
+
+	return r.LoadFromJson(rawJson)
+}
+
+func (r *Resource) LoadFromJson(incoming map[string]json.RawMessage) error {
+	r.FullJson = incoming
+
+	if includeRaw, ok := r.FullJson["include"]; ok {
+		delete(r.FullJson, "include")
+
+		include := ""
+		json.Unmarshal(includeRaw, &include)
+		if include != "" {
+			Log(2, "Including: %s", include)
+			// TODO make inc relative to current file
+			// TODO support include file w/include statement (recursive)
+			data, err := readIncludeFile(r.FromFile, include)
+			if err != nil {
+				return fmt.Errorf("Error reading include file(%s): %s",
+					include, err)
+			}
+			newRes := map[string]json.RawMessage{}
+			json.Unmarshal(data, &newRes)
+			for k, v := range newRes {
+				if _, ok = r.FullJson[k]; ok {
+					// Skip attributes that are already defined locally,
+					// they're overrides
+					continue
+				}
+				r.FullJson[k] = v
+			}
 		}
+
+		// Change our RawData to match the included version
+		r.RawData, _ = json.Marshal(r.FullJson)
 	}
 
-	if len(format) > 0 && format[0] == '>' {
-		outdent = true
-		format = format[1:]
+	// Now make "Json" by removing special attributes from the REST API def'n
+	r.Json = map[string]json.RawMessage{}
+	for k, v := range incoming {
+		r.Json[k] = v
 	}
 
-	if !strings.HasSuffix(format, "\n") {
-		format += "\n"
+	if val := r.FullJson["subscription"]; string(val) != "" {
+		r.Subscription = string(val)
+		delete(r.Json, "subscription")
+	}
+	if val := r.FullJson["resourcegroup"]; string(val) != "" {
+		r.ResourceGroup = string(val)
+		delete(r.Json, "resourcegroup")
+	}
+	if val := r.FullJson["type"]; string(val) != "" {
+		r.Type = string(val)
+		delete(r.Json, "type")
+	}
+	if val := r.FullJson["name"]; string(val) != "" {
+		r.Name = string(val)
+		delete(r.Json, "name")
+	}
+	if val := r.FullJson["apiversion"]; string(val) != "" {
+		r.ApiVersion = string(val)
+		delete(r.Json, "apiversion")
 	}
 
-	fmt.Fprintf(os.Stderr, logIndentSpace+format, args...)
-
-	if outdent {
-		logIndentSpace += "| "
-	}
-
+	return nil
 }
 
 func ErrStop(format string, args ...interface{}) {
@@ -119,14 +258,12 @@ func loadProperties() {
 			}
 		}
 	*/
-
-	Subscription = Properties["subscription"]
 }
 
 func getToken() {
 	// az account get-access-token -s $SUB -o tsv | sed 's/\t.*//'
-	cmd := exec.Command("az", "account", "get-access-token", "-s", Subscription,
-		"-o", "tsv")
+	cmd := exec.Command("az", "account", "get-access-token", "-s",
+		Properties["SUBSCRIPTION"], "-o", "tsv")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		ErrStop("Error getting token: %s\n", err)
@@ -163,6 +300,7 @@ func setupCmds() *cobra.Command {
 		Run:   CRUDFunc,
 	}
 	deleteCmd.Flags().StringArrayP("file", "f", nil, "List of resource files")
+	deleteCmd.Flags().BoolP("ignore", "i", false, "Don't stop on error")
 	rootCmd.AddCommand(deleteCmd)
 
 	getCmd := &cobra.Command{
@@ -183,11 +321,31 @@ type ResourceDef struct {
 }
 
 var ResourceAliases = map[string]string{
-	"App":   "Microsoft.App/containerApps",
-	"Redis": "Microsoft.Cache/redis",
+	"App":         "Microsoft.App/containerApps",
+	"Env":         "Microsoft.App/managedEnvironments",
+	"Environment": "Microsoft.App/managedEnvironments",
+	"Redis":       "Microsoft.Cache/redis",
+	"DBAccount":   "Microsoft.DocumentDB/databaseAccounts",
 }
 
 var Resources = map[string]*ResourceDef{
+	"ResourceGroup": &ResourceDef{
+		Type: "ResourceGroup",
+		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourcegroups/${NAME}?api-version=${APIVERSION}",
+		Defaults: map[string]string{
+			"APIVERSION": "2021-04-01",
+		},
+	},
+
+	"Microsoft.App/managedEnvironments": &ResourceDef{
+		Type: "Microsoft.App/managedEnvironments",
+		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/managedEnvironments/${NAME}?api-version=${APIVERSION}",
+		Defaults: map[string]string{
+			"APIVERSION": "2022-10-01",
+			"WAIT":       "true",
+		},
+	},
+
 	"Microsoft.App/containerApps": &ResourceDef{
 		Type: "Microsoft.App/containerApps",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerApps/${NAME}?api-version=${APIVERSION}",
@@ -195,6 +353,15 @@ var Resources = map[string]*ResourceDef{
 			"APIVERSION": "2022-11-01-preview",
 		},
 	},
+
+	"Microsoft.DocumentDB/databaseAccounts": &ResourceDef{
+		Type: "Microsoft.DocumentDB/databaseAccounts",
+		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.DocumentDB/databaseAccounts/${NAME}?api-version=${APIVERSION}",
+		Defaults: map[string]string{
+			"APIVERSION": "2021-04-01-preview",
+		},
+	},
+
 	"Microsoft.Cache/redis": &ResourceDef{
 		Type: "Microsoft.Cache/redis",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.Cache/redis/${NAME}?api-version=${APIVERSION}",
@@ -209,7 +376,11 @@ func getResourceDef(resType string) *ResourceDef {
 	if ok {
 		resType = tmp
 	}
-	return Resources[resType]
+	resDef := Resources[resType]
+	if resDef == nil {
+		ErrStop("Unknown resource type: %s", resType)
+	}
+	return resDef
 }
 
 func parseVariable() {
@@ -287,13 +458,17 @@ func newDoSubs(str string, props map[string]string) string {
 			}
 
 			data, err := downloadResource(props["SUBSCRIPTION"],
-				props["RESOURCEGROUP"],
-				res.Type, resName,
-				"2022-11-01-preview")
+				props["RESOURCEGROUP"], res.Type, resName, apiVer)
 			if err != nil {
 				ErrStop("Error downloading resource(%s/%s): %s", res.Type,
 					resName, err)
 			}
+
+			if data == nil {
+				ErrStop("Resource '%s/%s'  was not found", res.Type, resName)
+			}
+
+			Log(4, "Res json: %s", string(data))
 
 			Log(4, "Prop: .%s", prop)
 			query, err := gojq.Parse("." + prop)
@@ -398,6 +573,8 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 		ErrStop(err.Error())
 	}
 
+	ignore, _ := cmd.Flags().GetBool("ignore")
+
 	files = append(files, args...)
 
 	if len(files) == 0 {
@@ -411,7 +588,7 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 	Log(4, "Props:\n%#v\n", Properties)
 
 	if cmd.Use == "get" {
-		fmt.Fprintf(TabWriter, "Name\tStatus\n")
+		fmt.Fprintf(TabWriter, "TYPE\tNAME\tSTATUS\n")
 	}
 
 	for _, file := range files {
@@ -512,21 +689,58 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 			}
 		}
 
+		props := map[string]string{}
+		for k, v := range Properties {
+			props[k] = v
+		}
+
 		// Now iterate over the array and process each resource, stop on err
 		for _, res := range resources {
+			if string(res["type"]) == `"defaults"` {
+				for k, v := range res {
+					if k == "type" {
+						continue
+					}
+					val := ""
+					err := json.Unmarshal(v, &val)
+					if err != nil {
+						ErrStop("Defaults %q must be a string, not %q",
+							k, v)
+					}
+					Properties[strings.ToUpper(k)] = newDoSubs(val, Properties)
+				}
+
+				continue
+			}
+
+			resName := string(res["name"])
+			resType := string(res["type"])
+			verb := ""
+
 			if cmd.Use == "add" {
+				verb = "adding"
 				err = addResource(res)
 			} else if cmd.Use == "delete" {
+				verb = "deleting"
 				err = deleteResource(res)
+				if err != nil && ignore {
+					fmt.Fprintf(os.Stderr, "Error %s %s/%s: %s "+
+						"(ignoring)\n", verb, resType, resName, err)
+					err = nil
+				}
 			} else if cmd.Use == "get" {
+				verb = "getting"
 				err = getResource(res)
 			} else {
 				ErrStop("Unknown cmd: %#v", cmd)
 			}
+
 			if err != nil {
-				ErrStop("Error process %s: %s", file, err)
+				ErrStop(err.Error())
 			}
 		}
+
+		Properties = props
 
 	}
 
@@ -536,8 +750,10 @@ func CRUDFunc(cmd *cobra.Command, args []string) {
 }
 
 func getAttribute(res map[string]json.RawMessage, attr string, props map[string]string) string {
+	Log(4, ">In getAttribute(%v, %s, %v", res, attr, props)
 	js, ok := res[attr]
 	if !ok {
+		Log(4, "-> ''")
 		return ""
 	}
 
@@ -549,7 +765,9 @@ func getAttribute(res map[string]json.RawMessage, attr string, props map[string]
 
 	delete(res, attr)
 
+	value = newDoSubs(value, props)
 	props[strings.ToUpper(attr)] = value
+	Log(4, "<-> %s", value)
 	return value
 }
 
@@ -565,32 +783,64 @@ func addResource(res map[string]json.RawMessage) error {
 	Log(3, "resType: %s", resType)
 
 	resDef := getResourceDef(resType)
+	if resDef == nil {
+		return fmt.Errorf("Unknown resource type: %s", resType)
+	}
+
 	resURL := resDef.URL
 	for k, v := range props {
 		Log(3, "props[%s]=%q", k, v)
 	}
 
-	if resDef != nil {
-		for k, v := range resDef.Defaults {
-			props[k] = v
-			Log(3, "%s default: %s=%q", resType, k, v)
+	for k, v := range resDef.Defaults {
+		props[k] = v
+		Log(3, "%s default: %s=%q", resType, k, v)
+	}
+
+	resName := getAttribute(res, "name", props)
+	getAttribute(res, "subscription", props)
+	getAttribute(res, "resourcegroup", props)
+	getAttribute(res, "apiversion", props)
+
+	data, _ := json.MarshalIndent(res, "", "  ")
+	data = []byte(newDoSubs(string(data), props))
+	resURL = newDoSubs(resURL, props)
+
+	Log(1, "Adding: %s/%s (%s)", resType, resName, props["file"])
+	httpRes := doHTTP("PUT", resURL, data)
+	if httpRes.ErrorMessage != "" {
+		return fmt.Errorf("Error adding %s/%s: %s", resType, resName,
+			httpRes.ErrorMessage)
+	}
+
+	if resDef.Defaults["WAIT"] == "true" {
+		for {
+			data, err := downloadResource(props["SUBSCRIPTION"],
+				props["RESOURCEGROUP"],
+				resType, resName,
+				props["APIVERSION"])
+			if err != nil {
+				return fmt.Errorf("Error getting status of %s/%s: %s",
+					resType, resName, err)
+			}
+
+			getData := struct {
+				ID         string
+				Name       string
+				Type       string
+				Properties map[string]interface{}
+			}{}
+
+			err = json.Unmarshal(data, &getData)
+			if err != nil {
+				return fmt.Errorf("Error parsing response adding %s/%s: %s\n%s",
+					resType, resName, err, string(data))
+			}
+			if getData.Properties["provisioningState"].(string) == "Succeeded" {
+				break
+			}
+			time.Sleep(time.Second)
 		}
-
-		resName := getAttribute(res, "name", props)
-		getAttribute(res, "subscription", props)
-		getAttribute(res, "apiversion", props)
-
-		data, _ := json.MarshalIndent(res, "", "  ")
-		data = []byte(newDoSubs(string(data), props))
-		resURL = newDoSubs(resURL, props)
-
-		Log(1, "Adding: %s/%s (%s)", resType, resName, props["file"])
-		httpRes := doHTTP("PUT", resURL, data)
-		if httpRes.ErrorMessage != "" {
-			ErrStop(httpRes.ErrorMessage)
-		}
-	} else {
-		ErrStop("What? resURL: %s\n", resURL)
 	}
 
 	return nil
@@ -607,32 +857,34 @@ func deleteResource(res map[string]json.RawMessage) error {
 
 	Log(3, "resType: %s", resType)
 	resDef := getResourceDef(resType)
+	if resDef == nil {
+		return fmt.Errorf("Unknown resource type: %s", resType)
+	}
+
 	resURL := resDef.URL
 	for k, v := range props {
 		Log(3, "props[%s]=%q", k, v)
 	}
 
-	if resDef != nil {
-		for k, v := range resDef.Defaults {
-			props[k] = v
-			Log(3, "%s default: %s=%q", resType, k, v)
-		}
+	for k, v := range resDef.Defaults {
+		props[k] = v
+		Log(3, "%s default: %s=%q", resType, k, v)
+	}
 
-		resName := getAttribute(res, "name", props)
-		getAttribute(res, "subscription", props)
-		getAttribute(res, "apiversion", props)
+	resName := getAttribute(res, "name", props)
+	getAttribute(res, "subscription", props)
+	getAttribute(res, "resourcegroup", props)
+	getAttribute(res, "apiversion", props)
 
-		data, _ := json.MarshalIndent(res, "", "  ")
-		data = []byte(newDoSubs(string(data), props))
-		resURL = newDoSubs(resURL, props)
+	// data, _ := json.MarshalIndent(res, "", "  ")
+	// data = []byte(newDoSubs(string(data), props))
+	resURL = newDoSubs(resURL, props)
 
-		Log(1, "Deleting: %s/%s (%s)", resType, resName, props["file"])
-		httpRes := doHTTP("DELETE", resURL, nil) // data)
-		if httpRes.ErrorMessage != "" {
-			ErrStop(httpRes.ErrorMessage)
-		}
-	} else {
-		ErrStop("What? resURL: %s\n", resURL)
+	Log(1, "Deleting: %s/%s (%s)", resType, resName, props["file"])
+	httpRes := doHTTP("DELETE", resURL, nil) // data)
+	if httpRes.ErrorMessage != "" {
+		return fmt.Errorf("Error delting %s/%s: %s",
+			resType, resName, httpRes.ErrorMessage)
 	}
 
 	return nil
@@ -649,52 +901,57 @@ func getResource(res map[string]json.RawMessage) error {
 
 	Log(3, "resType: %s", resType)
 	resDef := getResourceDef(resType)
+
+	if resDef == nil {
+		return fmt.Errorf("Unknown resource type: %s", resType)
+	}
+
 	resURL := resDef.URL
 	for k, v := range props {
 		Log(3, "props[%s]=%q", k, v)
 	}
 
-	if resDef != nil {
-		for k, v := range resDef.Defaults {
-			props[k] = v
-			Log(3, "%s default: %s=%q", resType, k, v)
-		}
+	for k, v := range resDef.Defaults {
+		props[k] = v
+		Log(3, "%s default: %s=%q", resType, k, v)
+	}
 
-		resName := getAttribute(res, "name", props)
-		getAttribute(res, "subscription", props)
-		getAttribute(res, "apiversion", props)
+	resName := getAttribute(res, "name", props)
+	getAttribute(res, "subscription", props)
+	getAttribute(res, "resourcegroup", props)
+	getAttribute(res, "apiversion", props)
 
-		// data, _ := json.MarshalIndent(res, "", "  ")
-		// data = []byte(newDoSubs(string(data), props))
-		resURL = newDoSubs(resURL, props)
+	// data, _ := json.MarshalIndent(res, "", "  ")
+	// data = []byte(newDoSubs(string(data), props))
+	resURL = newDoSubs(resURL, props)
 
-		Log(2, "Getting: %s/%s (%s)", resType, resName, props["file"])
-		httpRes := doHTTP("GET", resURL, nil)
-		if httpRes.StatusCode == 404 {
-			fmt.Fprintf(TabWriter, "%s\t%s\n", resName, "<Not Found>")
-		} else {
-			if httpRes.ErrorMessage != "" {
-				ErrStop(httpRes.ErrorMessage)
-			}
-
-			getData := struct {
-				ID         string
-				Name       string
-				Type       string
-				Properties map[string]interface{}
-			}{}
-
-			err := json.Unmarshal(httpRes.Body, &getData)
-			if err != nil {
-				ErrStop("Error parsing response: %s\n%s\n", err,
-					string(httpRes.Body))
-			}
-
-			fmt.Fprintf(TabWriter, "%s\t%s\n",
-				resName, getData.Properties["provisioningState"].(string))
-		}
+	Log(2, "Getting: %s/%s (%s)", resType, resName, props["file"])
+	httpRes := doHTTP("GET", resURL, nil)
+	if httpRes.StatusCode == 404 {
+		fmt.Fprintf(TabWriter, "%s\t%s\t%s\n", resType, resName,
+			"<Not Found>")
 	} else {
-		ErrStop("What? resURL: %s\n", resURL)
+		if httpRes.ErrorMessage != "" {
+			return fmt.Errorf("Error getting %s/%s: %s", resType, resName,
+				httpRes.ErrorMessage)
+		}
+
+		getData := struct {
+			ID         string
+			Name       string
+			Type       string
+			Properties map[string]interface{}
+		}{}
+
+		err := json.Unmarshal(httpRes.Body, &getData)
+		if err != nil {
+			return fmt.Errorf("Error parsing response getting %s/%s:%s\n%s",
+				resType, resName, err, string(httpRes.Body))
+		}
+
+		fmt.Fprintf(TabWriter, "%s\t%s\t%s\n",
+			resType, resName,
+			getData.Properties["provisioningState"].(string))
 	}
 
 	return nil

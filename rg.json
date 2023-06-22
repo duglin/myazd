@@ -1,0 +1,13 @@
+[
+  {
+    "type": "defaults",
+    "resourcegroup": "poc"
+  },
+
+  {
+    "type": "ResourceGroup",
+    "name": "${RESOURCEGROUP}",
+
+    "location": "eastus"
+  }
+]

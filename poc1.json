@@ -1,0 +1,71 @@
+[
+  { // Set some default values/variables
+    "type": "defaults",
+    "resourcegroup": "poc"
+  },
+
+  { // Create a ResourceGroup
+    "type": "ResourceGroup",
+    "name": "${RESOURCEGROUP}",
+
+    "location": "eastus"
+  },
+
+  { // Create an ACA Env
+    "type": "Env",
+    "name": "poc",
+
+    "location": "eastus",
+    "sku": {
+      "name": "Consumption"
+    },
+    "properties": {}
+  },
+
+  { // Create an ACA Redis service
+    "type": "App",
+    "name": "poc-redis",
+  
+    "location": "eastus",
+    "properties": {
+      "environmentId": "${Env/poc.id}",
+      "configuration": {
+        "service": {
+          "type": "redis"
+        }
+      }
+    }
+  },
+
+  { // Create an ACA app bound to the Redis service above
+    "type": "App",
+    "name": "poc",
+  
+    "location": "eastus",
+    "properties": {
+      "environmentId": "${Env/poc.id}",
+      "configuration": {
+        "ingress": {
+          "allowInsecure": true,
+          "external": true,
+          "targetPort": 8080
+        }
+      },
+      "template": {
+        "containers": [
+          {
+            "image": "duglin/echo",
+            "name": "echo"
+          }
+        ],
+        "serviceBinds": [
+          {
+            "serviceId": "${App/poc-redis.id}",
+            "name": "pocredis"
+          }
+        ]
+      }
+    }
+  }
+
+]
