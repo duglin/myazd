@@ -40,6 +40,7 @@ comment go look at the apps in the portal
 
 comment see the files
 doit ls .azx/stage_default
+doit cat .azx/stage_default/*
 
 comment recreate everything in Azure
 doit azx up

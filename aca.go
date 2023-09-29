@@ -155,7 +155,7 @@ type AcaAppScale struct {
 
 type AcaAppServiceBind struct {
 	ServiceId *string `json:"serviceId,omitempty"`
-	Name      string  `json:"name,omitempty"`
+	Name      *string `json:"name,omitempty"`
 }
 
 type AcaAppTemplate struct {
@@ -172,6 +172,19 @@ type AcaAppProperties struct {
 	Template            *AcaAppTemplate      `json:"template,omitempty"`
 }
 
+func (aa *AcaApp) MarshalJSON() ([]byte, error) {
+	tmpAa := *aa
+	if WhyMarshal == "ARM" {
+		if tmpAa.Location == nil {
+			tmpAa.Location = StringPtr(Config["defaults.Location"])
+		}
+		if tmpAa.Location == nil || *(tmpAa.Location) == "" {
+			ErrStop(`Missing "location" for "%s/%s"`, aa.NiceType, aa.Name)
+		}
+	}
+	return json.Marshal(tmpAa)
+}
+
 func (aap *AcaAppProperties) MarshalJSON() ([]byte, error) {
 	tmpAap := *aap
 	if WhyMarshal == "ARM" {
@@ -181,10 +194,23 @@ func (aap *AcaAppProperties) MarshalJSON() ([]byte, error) {
 	return json.Marshal(tmpAap)
 }
 
+func (aac *AcaAppContainer) MarshalJSON() ([]byte, error) {
+	tmpAac := *aac
+	if WhyMarshal == "ARM" {
+		if tmpAac.Name == nil {
+			tmpAac.Name = StringPtr("main")
+		}
+	}
+	return json.Marshal(tmpAac)
+}
+
 func (asb *AcaAppServiceBind) xMarshalJSON() ([]byte, error) {
 	tmpAsb := *asb
 	if WhyMarshal == "ARM" {
-		tmpAsb.ServiceId = StringPtr(*(tmpAsb.ServiceId))
+		// tmpAsb.ServiceId = StringPtr(*(tmpAsb.ServiceId))
+		if tmpAsb.Name == nil {
+			tmpAsb.Name = StringPtr(*(tmpAsb.ServiceId))
+		}
 	}
 	return json.Marshal(tmpAsb)
 }
@@ -314,7 +340,7 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 	app.Filename = fmt.Sprintf("%s-%s.json", app.NiceType, app.Name)
 
 	// App specific stuff
-	app.Location = StringPtr(Config["defaults.Location"])
+	// app.Location = StringPtr(Config["defaults.Location"])
 
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
@@ -360,7 +386,7 @@ func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	app.Filename = fmt.Sprintf("%s-%s.json", app.NiceType, app.Name)
 
 	// App specific stuff
-	app.Location = StringPtr(Config["defaults.Location"])
+	// app.Location = StringPtr(Config["defaults.Location"])
 
 	app.ProcessFlags(cmd)
 	app.Save()
@@ -404,7 +430,7 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 	*/
 
 	SetStringProp(app, cmd.Flags(), "image",
-		`{"properties":{"template":{"containers":[{"image":%s,"name":"main"}]}}}`)
+		`{"properties":{"template":{"containers":[{"image":%s}]}}}`)
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
 	if !set && app.Properties.EnvironmentId == nil {
@@ -423,6 +449,7 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 			// Just make sure the container is there first
 			SetJson(app,
 				`{"properties":{"template":{"containers":[{"name":"main"}]}}}`)
+			app.Properties.Template.Containers[0].Name = nil
 		}
 		name, val, found := strings.Cut(env, "=")
 		c := app.Properties.Template.Containers[0]
@@ -488,7 +515,7 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 
 			newBind := &AcaAppServiceBind{
 				ServiceId: StringPtr(bindName),
-				Name:      bindName,
+				// Name:      bindName,
 			}
 			templ.ServiceBinds = append(templ.ServiceBinds, newBind)
 		}
@@ -502,6 +529,8 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 		for _, bindName := range bindServices {
 			found := false
 			for i, sb := range templ.ServiceBinds {
+				// TODO check for the same service connected more than
+				// once but w/o them giving us a bindingName
 				if sb.ServiceId != nil && *sb.ServiceId == bindName {
 					templ.ServiceBinds = append(templ.ServiceBinds[:i],
 						templ.ServiceBinds[i+1:]...)
