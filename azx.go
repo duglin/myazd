@@ -1,5 +1,12 @@
 package main
 
+/*
+- Should be "noun verb", not "verb noun"
+  - E.g. not "azx add aca-app ...", should be "azx aca-app create ..."
+  - Allows for custom verbs per noun
+
+*/
+
 import (
 	"bytes"
 	"encoding/json"
@@ -29,7 +36,9 @@ var Properties map[string]string = map[string]string{}
 var Token string = ""
 var TabWriter = tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 var WhyMarshal = ""
+
 var RootCmd *cobra.Command
+var ShowCmd *cobra.Command
 var AddCmd *cobra.Command
 var UpdateCmd *cobra.Command
 
@@ -157,6 +166,7 @@ func setupRootCmds() *cobra.Command {
 		Short: "Deprovision all resources",
 		Run:   DeprovisionFunc,
 	}
+	downCmd.Flags().BoolP("wait", "w", false, "Wait for resources to vanish")
 	RootCmd.AddCommand(downCmd)
 
 	stageCmd := &cobra.Command{
@@ -176,8 +186,16 @@ func setupRootCmds() *cobra.Command {
 		Short: "Show list of resources in project",
 		Run:   ListFunc,
 	}
-	listCmd.Flags().StringP("output", "o", "", "Format (json)")
+	listCmd.Flags().StringP("output", "o", "", "Format (table*,json)")
 	RootCmd.AddCommand(listCmd)
+
+	ShowCmd = &cobra.Command{
+		Use:   "show",
+		Short: "Show details about a resource",
+		// Run:   ShowFunc,
+	}
+	ShowCmd.Flags().StringP("output", "o", "", "Format (table*,json)")
+	RootCmd.AddCommand(ShowCmd)
 
 	AddCmd = &cobra.Command{
 		Use:   "add",
@@ -273,6 +291,8 @@ type ResourceReference struct {
 	APIVersion    string
 	Name          string
 	Property      string
+
+	Origin string
 }
 
 func (rr *ResourceReference) AsID() string {
@@ -302,6 +322,7 @@ func (rr *ResourceReference) Populate(ref string) {
 		rr.ResourceGroup = parts[3]
 		rr.Type = parts[5] + "/" + parts[6]
 		rr.Name = parts[7]
+		rr.Origin = ref
 		return
 	}
 
@@ -339,6 +360,7 @@ func ParseResourceReference(ref string) *ResourceReference {
 		APIVersion:    strs[4],
 		Name:          strs[5],
 		Property:      strs[6],
+		Origin:        ref,
 	}
 }
 
@@ -362,6 +384,7 @@ func ParseResourceURL(ref string) *ResourceReference {
 	rr.Type = parts[5] + "/" + parts[6]
 	rr.Name = parts[7]
 	rr.APIVersion = ResourceDefs[rr.Type].Defaults["APIVERSION"]
+	rr.Origin = ref
 
 	return rr
 }
@@ -776,6 +799,8 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 
 	LoadConfig()
 
+	resources := []*ResourceBase{}
+
 	if len(args) > 0 {
 		stage := Config["currentStage"]
 		if stage == "" {
@@ -786,12 +811,27 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 			argTmp := strings.ReplaceAll(arg, "/", "-")
 			res, err := ResourceFromFile(stage, argTmp+".json")
 			NoErr(err, "Error reading %q: %s", arg, err)
-			res.Deprovision()
+			resources = append(resources, res)
 		}
 	} else {
-		resources := GetStageResources("")
-		for _, res := range resources {
-			res.Deprovision()
+		resources = GetStageResources("")
+	}
+
+	for _, res := range resources {
+		res.Deprovision()
+	}
+
+	wait, _ := cmd.Flags().GetBool("wait")
+	if wait {
+		fmt.Printf("Waiting for them to disappear...\n")
+		for len(resources) > 0 {
+			time.Sleep(1 * time.Second)
+			for i, res := range resources {
+				if !res.Exists() {
+					resources = append(resources[:i], resources[i+1:]...)
+					break
+				}
+			}
 		}
 	}
 }
@@ -898,8 +938,12 @@ func (r *ResourceBase) Save() {
 
 			data, err := downloadResource(dep.Subscription,
 				dep.ResourceGroup, dep.Type, dep.Name, dep.APIVersion)
-			if err != nil || len(data) == 0 {
-				fmt.Fprintf(os.Stderr, "Can't download/find: %s (%s)", id, err)
+			if err != nil {
+				ErrStop("Error downloading %q: %s", id, err)
+			}
+			if len(data) == 0 {
+				ErrStop("Can't find dependency for %s/%s: %s",
+					r.NiceType, r.Name, dep.Origin)
 			}
 		}
 	}
@@ -907,7 +951,9 @@ func (r *ResourceBase) Save() {
 	data, _ := json.MarshalIndent(r.Object, "", "  ")
 	data = append(data, byte('\n'))
 	NoErr(WriteStageFile(r.Stage, r.Filename, data))
-	fmt.Printf("Saved: %s/%s\n", r.Stage, r.Filename)
+	if log.GetVerbose() > 0 {
+		fmt.Printf("Saved: %s/%s\n", r.Stage, r.Filename)
+	}
 }
 
 func (r *ResourceBase) Provision() {
@@ -969,6 +1015,20 @@ func (r *ResourceBase) Deprovision() {
 		ErrStop("Error deleting %s/%s: %s", r.NiceType, r.Name,
 			httpRes.ErrorMessage)
 	}
+}
+
+func (r *ResourceBase) Exists() bool {
+	log.VPrintf(2, ">Enter: RB:Exists (%s)", r.NiceType+"/"+r.Name)
+	defer log.VPrintf(2, "<Exit: RB:Exists")
+
+	resURL := r.AsURL()
+
+	log.VPrintf(2, "URL: %s", resURL)
+	httpRes := doHTTP("GET", resURL, nil)
+	if httpRes.ErrorMessage != "" || httpRes.StatusCode != 200 {
+		return false
+	}
+	return true
 }
 
 func ToJson(obj interface{}) string {
@@ -1108,7 +1168,7 @@ func doHTTP(verb string, URL string, data []byte) *HTTPResponse {
 				msg = e
 			}
 		} else {
-			fmt.Println(err)
+			fmt.Println("%s\n%s", err, string(body))
 			// Can't pretty print, so just dump it
 			msg = fmt.Sprintf("Error: %s\n%s", res.Status, string(str))
 		}

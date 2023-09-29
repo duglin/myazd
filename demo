@@ -19,8 +19,11 @@ doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
 doit azx add aca-app -n myapp -i duglin/aca-redis --environment=demo --ingress external
 
+comment List the resources in the project
+doit azx list
+
 comment "lets look at the app"
-doit cat .azx/stage_default/aca-app-myapp.json
+doit azx show aca-app -n myapp
 
 doit azx up
 comment check it on the web
@@ -32,11 +35,12 @@ comment turn on auto-provision
 doit azx set defaults.provision=true
 
 doit azx update aca-app -n myapp --bind myredis
-comment go look at the app
+doit azx show aca-app -n myapp
+comment go look at the app in the portal
 
-doit azx down
+doit azx down --wait
 
-comment go look at the apps in the portal
+comment portal should not show app or service
 
 comment see the files
 doit ls .azx/stage_default

@@ -71,6 +71,15 @@ func setupAcaCmds() {
 	cmd.MarkFlagRequired("name")
 	UpdateCmd.AddCommand(cmd)
 
+	cmd = &cobra.Command{
+		Use:   "aca-app",
+		Short: "Show details about an Azure Container App Application",
+		Run:   ShowAcaAppFunc,
+	}
+	cmd.Flags().StringP("name", "n", "", "Name of app")
+	cmd.MarkFlagRequired("name")
+	ShowCmd.AddCommand(cmd)
+
 	// ---
 
 	cmd = &cobra.Command{
@@ -78,11 +87,21 @@ func setupAcaCmds() {
 		Short: "Add an Azure Container App Redis Service",
 		Run:   AddAcaServiceFunc,
 	}
-	cmd.Flags().StringP("name", "n", "", "Name of app")
+	cmd.Flags().StringP("name", "n", "", "Name of service")
 	cmd.Flags().String("environment", "", "Name of ACA environment")
 	cmd.Flags().Bool("provision", false, "Provision after update")
 	cmd.MarkFlagRequired("name")
 	AddCmd.AddCommand(cmd)
+
+	cmd = &cobra.Command{
+		Use:   "aca-redis",
+		Short: "Show details about an Azure Container App Redis Service",
+		Run:   ShowAcaServiceFunc,
+	}
+	cmd.Flags().StringP("name", "n", "", "Name of service")
+	cmd.MarkFlagRequired("name")
+	ShowCmd.AddCommand(cmd)
+
 }
 
 func setupAcaResourceDefs() {
@@ -227,6 +246,7 @@ func (aap *AcaAppProperties) ResolveEnvironmentId() *ResourceReference {
 		ResourceGroup: Config["defaults.ResourceGroup"],
 		Type:          "Microsoft.App/managedEnvironments",
 		APIVersion:    ResourceDefs["Microsoft.App/managedEnvironments"].Defaults["APIVERSION"],
+		Origin:        *(aap.EnvironmentId),
 	}
 
 	// Now, override with env values
@@ -365,6 +385,24 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 	}
 }
 
+func ShowAcaServiceFunc(cmd *cobra.Command, args []string) {
+	log.VPrintf(2, ">Enter: ShowAcaServiceFunc (%q)", args)
+	defer log.VPrintf(2, "<Exit: ShowAcaServiceFunc")
+
+	LoadConfig()
+
+	stage := Config["currentStage"]
+	name, _ := cmd.Flags().GetString("name")
+	name = fmt.Sprintf("%s-%s.json", cmd.CalledAs(), name)
+	res, err := ResourceFromFile(stage, name)
+	NoErr(err, "Resource %s/%s not found", cmd.CalledAs(), name)
+
+	app := res.Object.(*AcaApp)
+
+	fmt.Printf("Name: %s\n", app.Name)
+	fmt.Printf("Service: %s\n", *(app.Properties.Configuration.Service.Type))
+}
+
 func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: AddAcaAppFunc (%q)", args)
 	defer log.VPrintf(2, "<Exit: AddAcaAppFunc")
@@ -420,17 +458,95 @@ func UpdateAcaAppFunc(cmd *cobra.Command, args []string) {
 	}
 }
 
+func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
+	log.VPrintf(2, ">Enter: UpdateAcaAppFunc (%q)", args)
+	defer log.VPrintf(2, "<Exit: UpdateAcaAppFunc")
+
+	LoadConfig()
+
+	stage := Config["currentStage"]
+	name, _ := cmd.Flags().GetString("name")
+	name = fmt.Sprintf("%s-%s.json", "aca-app", name)
+	res, err := ResourceFromFile(stage, name)
+	NoErr(err, "Resource %s/%s not found", cmd.CalledAs(), name)
+
+	app := res.Object.(*AcaApp)
+
+	fmt.Printf("Name         : %s\n", app.Name)
+	fmt.Printf("Environment  : %s\n", NoNil(app.Properties.EnvironmentId))
+	if app.Location != nil {
+		fmt.Printf("Location     : %s\n", *(app.Location))
+	}
+	// fmt.Printf("\n")
+	fmt.Printf("Subscription : %s\n", app.Subscription)
+	fmt.Printf("ResourceGroup: %s\n", app.ResourceGroup)
+
+	ingress := "internal"
+	port := ""
+
+	if app.Properties != nil && app.Properties.Configuration != nil &&
+		app.Properties.Configuration.Ingress != nil {
+		ing := app.Properties.Configuration.Ingress
+		if ing.External != nil && *(ing.External) == true {
+			ingress = "external"
+		}
+		if ing.TargetPort != nil {
+			port = fmt.Sprintf("%s", ing.TargetPort)
+		}
+	}
+
+	fmt.Printf("\n")
+	fmt.Printf("Ingress: %s\n", ingress)
+	if port != "" {
+		fmt.Printf("Port   : %s\n", port)
+	}
+
+	template := app.Properties.Template
+	if template != nil {
+		cont := template.Containers
+		if cont == nil || len(cont) == 0 {
+			fmt.Printf("\n")
+			fmt.Printf("Container: none\n")
+		} else {
+			for i, c := range cont {
+				fmt.Printf("\n")
+				if len(cont) > 1 {
+					fmt.Printf("Container(%d):\n", i+1)
+				} else {
+					fmt.Printf("Container:\n")
+				}
+				fmt.Printf("  Image: %s\n", NoNil(c.Image))
+			}
+		}
+
+		// scale := template.Scale
+
+		binds := template.ServiceBinds
+		if len(binds) > 0 {
+			fmt.Printf("\n")
+			fmt.Printf("Bindings:\n")
+			for _, bind := range binds {
+				fmt.Printf("  - Service: %s\n", NoNil(bind.ServiceId))
+			}
+		}
+	}
+}
+
+func NoNil(str *string) string {
+	if str == nil {
+		return ""
+	}
+	return *str
+}
+
 func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 	log.VPrintf(2, ">Enter: ProcessFlags")
 	defer log.VPrintf(2, "<Exit: ProcessFlags")
 
-	/*
-		cmd.Flags().StringArray("bind", nil, "Services to connect to")
-		cmd.Flags().StringArray("unbind", nil, "Bindings/services to disconnect")
-	*/
-
 	SetStringProp(app, cmd.Flags(), "image",
 		`{"properties":{"template":{"containers":[{"image":%s}]}}}`)
+
+	// TODO make sure 'environ' exists
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
 	if !set && app.Properties.EnvironmentId == nil {
