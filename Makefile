@@ -1,7 +1,9 @@
-all: azd
+all: azx
 
-azd: azd.go
+azx: *.go
 	GO111MODULE=off go build -o $@ *.go
 
-test: azd
-	./azd apply acaRedis.json acaApp.json
+test: azx
+	rm -rf .azx
+	./azx init -f
+	./azx add aca-app -n poc --image duglin/echo --environment demo

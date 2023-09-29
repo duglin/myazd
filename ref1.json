@@ -1,4 +1,0 @@
-[
-  { "include": "acaApp.json", "name": "poc3" },
-  { "include": "acaRedis.json" }
-]
