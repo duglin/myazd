@@ -318,7 +318,7 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
-	if !set {
+	if !set && app.Properties.EnvironmentId == nil {
 		env := Config["defaults.aca-env"]
 		if env == "" {
 			ErrStop("Missing the aca-env value. "+
@@ -407,7 +407,7 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 		`{"properties":{"template":{"containers":[{"image":%s,"name":"main"}]}}}`)
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
-	if !set {
+	if !set && app.Properties.EnvironmentId == nil {
 		env := Config["defaults.aca-env"]
 		if env == "" {
 			ErrStop("Missing the aca-env value. "+

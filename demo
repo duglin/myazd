@@ -1,6 +1,7 @@
 #!/bin/bash
 
 export RETRYONFAIL=1
+export PATH=$PATH:$PWD
 . .demoscript
 
 clear
@@ -9,23 +10,38 @@ set -e
 rm -rf testDir
 doit mkdir testDir
 doit cd testDir
-doit ls -la
+cd testDir
+doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
 doit azx init
-doit ls -la
-comment normally we\'d ask for the subscription and resourceGroup
+comment "normally we'd ask for the subscription and resourceGroup"
+doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
-doit azx add aca-app -n myapp -i duglin/aca-redis 
-comment go look at the app
+doit azx add aca-app -n myapp -i duglin/aca-redis --environment=demo --ingress external
 
-doit cat ./azx/stage_default/aca-app-redis.json
+comment "lets look at the app"
+doit cat .azx/stage_default/aca-app-myapp.json
 
-doit azx add aca-redis -n myredis --provision
+doit azx up
+comment check it on the web
 
-doit azx update aca-app -n myapp --bind myredis -provision
+comment "now lets create a redis service and provison at the same time"
+doit azx add aca-redis -n myredis --environment=demo --provision
+
+comment turn on auto-provision
+doit azx set defaults.provision=true
+
+doit azx update aca-app -n myapp --bind myredis
 comment go look at the app
 
 doit azx down
+
 comment go look at the apps in the portal
 
+comment see the files
+doit ls .azx/stage_default
+
+comment recreate everything in Azure
 doit azx up
+
+doit azx down
