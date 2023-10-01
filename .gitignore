@@ -1,3 +1,6 @@
 .auth
 azd
 .azx
+azx
+.DS_Store
+

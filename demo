@@ -67,3 +67,5 @@ doit azx diff aca-app/myapp
 
 comment clean up
 doit azx down
+
+rm out cmds
