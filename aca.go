@@ -77,6 +77,7 @@ func setupAcaCmds() {
 		Run:   ShowAcaAppFunc,
 	}
 	cmd.Flags().StringP("name", "n", "", "Name of app")
+	cmd.Flags().StringP("output", "o", "pretty", "Format (pretty,raw,rest,azure)")
 	cmd.MarkFlagRequired("name")
 	ShowCmd.AddCommand(cmd)
 
@@ -99,47 +100,52 @@ func setupAcaCmds() {
 		Run:   ShowAcaServiceFunc,
 	}
 	cmd.Flags().StringP("name", "n", "", "Name of service")
+	cmd.Flags().StringP("output", "o", "pretty", "Format (pretty,raw,rest,azure)")
 	cmd.MarkFlagRequired("name")
 	ShowCmd.AddCommand(cmd)
 
 }
 
 func setupAcaResourceDefs() {
-	ResourceDefs["Microsoft.App/managedEnvironments"] = &ResourceDef{
+	AddResourceDef(&ResourceDef{
 		Type: "Microsoft.App/managedEnvironments",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/managedEnvironments/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
 			"APIVERSION": "2022-10-01",
 			"WAIT":       "true",
 		},
-	}
+	})
 
-	ResourceDefs["Microsoft.App/containerApps"] = &ResourceDef{
+	AddResourceDef(&ResourceDef{
 		Type: "Microsoft.App/containerApps",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerApps/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
 			"APIVERSION": "2022-11-01-preview",
 			"WAIT":       "true",
 		},
-	}
+	})
+}
+
+type AcaAppIngress struct {
+	External      *bool `json:"external,omitempty"`
+	TargetPort    *int  `json:"targetPort,omitempty"`
+	CustomDomains []*struct {
+		Name          *string `json:"name,omitempty"`
+		BindingType   *string `json:bindingType,omitempty"`
+		CertificateId *string `json:certificateId,omitempty"`
+	} `json:"customDomains,omitempty"`
+	Traffic []*AcaAppTraffic `json:"traffic,omitempty"`
+	// ipSecurityRestrictions
+	// stickySessions
+	// clientCertificateMode
+	// corePolicy
+}
+
+type AcaAppTraffic struct {
 }
 
 type AcaAppConfiguration struct {
-	Ingress *struct {
-		External      *bool `json:"external,omitempty"`
-		TargetPort    *int  `json:"targetPort,omitempty"`
-		CustomDomains []*struct {
-			Name          *string `json:"name,omitempty"`
-			BindingType   *string `json:bindingType,omitempty"`
-			CertificateId *string `json:certificateId,omitempty"`
-		} `json:"customDomains,omitempty"`
-		Traffic []*struct {
-		} `json:"traffic,omitempty"`
-		// ipSecurityRestrictions
-		// stickySessions
-		// clientCertificateMode
-		// corePolicy
-	} `json:"ingress,omitempty"`
+	Ingress *AcaAppIngress `json:"ingress,omitempty"`
 	// dapr
 	// maxInactiveRevisions
 	Service *struct {
@@ -154,16 +160,18 @@ type AcaAppEnv struct {
 }
 
 type AcaAppContainer struct {
-	Image     *string      `json:"image,omitempty"`
-	Name      *string      `json:"name,omitempty"`
-	Env       []*AcaAppEnv `json:"env,omitempty"`
-	Resources *struct {
-		CPU    *float64 `json:"cpu,omitempty"`
-		Memory *string  `json:"memory,omitempty"`
-	} `json:"resources,omitempty"`
-	Command []string `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
+	Image     *string          `json:"image,omitempty"`
+	Name      *string          `json:"name,omitempty"`
+	Env       []*AcaAppEnv     `json:"env,omitempty"`
+	Resources *AcaAppResources `json:"resources,omitempty"`
+	Command   []string         `json:"command,omitempty"`
+	Args      []string         `json:"args,omitempty"`
 	// probes
+}
+
+type AcaAppResources struct {
+	CPU    *float64 `json:"cpu,omitempty"`
+	Memory *string  `json:"memory,omitempty"`
 }
 
 type AcaAppScale struct {
@@ -209,6 +217,7 @@ func (aap *AcaAppProperties) MarshalJSON() ([]byte, error) {
 	if WhyMarshal == "ARM" {
 		envRef := aap.ResolveEnvironmentId()
 		tmpAap.EnvironmentId = StringPtr(envRef.AsID())
+		tmpAap.WorkloadProfileName = StringPtr("Consumption")
 	}
 	return json.Marshal(tmpAap)
 }
@@ -219,11 +228,40 @@ func (aac *AcaAppContainer) MarshalJSON() ([]byte, error) {
 		if tmpAac.Name == nil {
 			tmpAac.Name = StringPtr("main")
 		}
+		if tmpAac.Resources == nil {
+			tmpAac.Resources = &AcaAppResources{}
+		}
+		if tmpAac.Resources.CPU == nil {
+			f := 0.5
+			tmpAac.Resources.CPU = &f
+		}
+		if tmpAac.Resources.Memory == nil {
+			m := "1Gi"
+			tmpAac.Resources.Memory = &m
+		}
 	}
 	return json.Marshal(tmpAac)
 }
 
-func (asb *AcaAppServiceBind) xMarshalJSON() ([]byte, error) {
+func (aai *AcaAppIngress) MarshalJSON() ([]byte, error) {
+	tmpAai := *aai
+	if WhyMarshal == "ARM" {
+		if tmpAai.External != nil && *(tmpAai.External) == true &&
+			tmpAai.TargetPort == nil {
+			port := 8080
+			tmpAai.TargetPort = &port
+
+			/*
+				if tmpAai.Traffic == nil {
+					tmpAai.Traffic = []*AcaAppTraffic{{}}
+				}
+			*/
+		}
+	}
+	return json.Marshal(tmpAai)
+}
+
+func (asb *AcaAppServiceBind) MarshalJSON() ([]byte, error) {
 	tmpAsb := *asb
 	if WhyMarshal == "ARM" {
 		// tmpAsb.ServiceId = StringPtr(*(tmpAsb.ServiceId))
@@ -232,6 +270,26 @@ func (asb *AcaAppServiceBind) xMarshalJSON() ([]byte, error) {
 		}
 	}
 	return json.Marshal(tmpAsb)
+}
+
+func (aat *AcaAppTemplate) MarshalJSON() ([]byte, error) {
+	tmpAat := *aat
+	if WhyMarshal == "ARM" {
+		if tmpAat.Scale == nil {
+			tmpAat.Scale = &AcaAppScale{}
+		}
+		/*
+			if tmpAat.Scale.MinReplicas == nil {
+				m := 0
+				tmpAat.Scale.MinReplicas = &m
+			}
+		*/
+		if tmpAat.Scale.MaxReplicas == nil {
+			m := 10
+			tmpAat.Scale.MaxReplicas = &m
+		}
+	}
+	return json.Marshal(tmpAat)
 }
 
 func (aap *AcaAppProperties) ResolveEnvironmentId() *ResourceReference {
@@ -245,7 +303,7 @@ func (aap *AcaAppProperties) ResolveEnvironmentId() *ResourceReference {
 		Subscription:  Config["defaults.Subscription"],
 		ResourceGroup: Config["defaults.ResourceGroup"],
 		Type:          "Microsoft.App/managedEnvironments",
-		APIVersion:    ResourceDefs["Microsoft.App/managedEnvironments"].Defaults["APIVERSION"],
+		APIVersion:    GetResourceDef("Microsoft.App/managedEnvironments").Defaults["APIVERSION"],
 		Origin:        *(aap.EnvironmentId),
 	}
 
@@ -274,34 +332,31 @@ func (app *AcaApp) DependsOn() []*ResourceReference {
 }
 
 func (app *AcaApp) ToARMJson() string {
-	saveURL := app.URL
-	app.URL = ""
-
-	if app.Properties != nil && app.Properties.Configuration != nil &&
-		app.Properties.Configuration.Ingress != nil {
-		ingress := app.Properties.Configuration.Ingress
-		if ingress.External != nil && *ingress.External == true &&
-			ingress.TargetPort == nil {
-			port := 8080
-			ingress.TargetPort = &port
-		}
-	}
-
 	WhyMarshal = "ARM"
 	data, _ := json.MarshalIndent(app, "", "  ")
 	WhyMarshal = ""
 
-	app.URL = saveURL
 	return string(data)
 }
 
+func (app *AcaApp) HideServerFields(diffA ARMResource) {
+	// diffApp := diffA.(*AcaApp)
+
+	if app.Properties != nil && app.Properties.Configuration != nil {
+		c := app.Properties.Configuration
+		if (*c == AcaAppConfiguration{}) {
+			app.Properties.Configuration = nil
+		}
+	}
+}
+
 func AcaFromARMJson(data []byte) *ResourceBase {
-	tmp := struct{ URL string }{}
+	tmp := struct{ ID string }{}
 	json.Unmarshal(data, &tmp)
 
-	resRef := ParseResourceURL(tmp.URL)
+	resRef := ParseResourceID(tmp.ID)
 
-	if resRef.Type == "Microsoft.App/containerApps" {
+	if strings.EqualFold(resRef.Type, "Microsoft.App/containerApps") {
 		app := &AcaApp{}
 		json.Unmarshal(data, &app)
 
@@ -321,12 +376,12 @@ func AcaFromARMJson(data []byte) *ResourceBase {
 			app.NiceType = "aca-app"
 		}
 
-		app.URL = tmp.URL
+		app.ID = tmp.ID
 		app.Object = app
 		app.RawData = data
 
 		return &app.ResourceBase
-	} else if resRef.Type == "Microsoft.App/managedEnvironments" {
+	} else if strings.EqualFold(resRef.Type, "Microsoft.App/managedEnvironments") {
 	} else {
 		return nil
 	}
@@ -353,7 +408,7 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 	app.ResourceGroup = Config["defaults.ResourceGroup"]
 	app.Type = "Microsoft.App/containerApps"
 	app.Name, _ = cmd.Flags().GetString("name")
-	app.APIVersion = ResourceDefs[app.Type].Defaults["APIVERSION"]
+	app.APIVersion = GetResourceDef(app.Type).Defaults["APIVERSION"]
 	app.NiceType = cmd.CalledAs()
 
 	app.Stage = Config["currentStage"]
@@ -364,7 +419,7 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
-	if !set && app.Properties.EnvironmentId == nil {
+	if !set && app.Properties == nil || app.Properties.EnvironmentId == nil {
 		env := Config["defaults.aca-env"]
 		if env == "" {
 			ErrStop("Missing the aca-env value. "+
@@ -399,6 +454,40 @@ func ShowAcaServiceFunc(cmd *cobra.Command, args []string) {
 
 	app := res.Object.(*AcaApp)
 
+	output, _ := cmd.Flags().GetString("output")
+
+	if output == "raw" {
+		fmt.Printf("%s\n", string(res.RawData))
+		return
+	}
+
+	if output == "rest" {
+		fmt.Printf("%s\n", res.Object.ToARMJson())
+		return
+	}
+
+	if output == "azure" {
+		data, err := res.Download()
+		if err != nil {
+			ErrStop("Error downloading: %s", err)
+		}
+		if len(data) == 0 {
+			ErrStop("Resource doesn't existin in Azure - "+
+				"try '%s up' to create it", APP)
+		}
+
+		tmp := map[string]json.RawMessage{}
+		json.Unmarshal(data, &tmp)
+		str, _ := json.MarshalIndent(tmp, "", "  ")
+
+		fmt.Printf("%s\n", string(str))
+		return
+	}
+
+	if output != "pretty" {
+		ErrStop("Unknown output format %q", output)
+	}
+
 	fmt.Printf("Name: %s\n", app.Name)
 	fmt.Printf("Service: %s\n", *(app.Properties.Configuration.Service.Type))
 }
@@ -417,7 +506,7 @@ func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	app.ResourceGroup = Config["defaults.ResourceGroup"]
 	app.Type = "Microsoft.App/containerApps"
 	app.Name, _ = cmd.Flags().GetString("name")
-	app.APIVersion = ResourceDefs[app.Type].Defaults["APIVERSION"]
+	app.APIVersion = GetResourceDef(app.Type).Defaults["APIVERSION"]
 	app.NiceType = "aca-app"
 
 	app.Stage = Config["currentStage"]
@@ -459,8 +548,8 @@ func UpdateAcaAppFunc(cmd *cobra.Command, args []string) {
 }
 
 func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
-	log.VPrintf(2, ">Enter: UpdateAcaAppFunc (%q)", args)
-	defer log.VPrintf(2, "<Exit: UpdateAcaAppFunc")
+	log.VPrintf(2, ">Enter: ShowAcaAppFunc (%q)", args)
+	defer log.VPrintf(2, "<Exit: ShowAcaAppFunc")
 
 	LoadConfig()
 
@@ -471,6 +560,40 @@ func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
 	NoErr(err, "Resource %s/%s not found", cmd.CalledAs(), name)
 
 	app := res.Object.(*AcaApp)
+
+	output, _ := cmd.Flags().GetString("output")
+
+	if output == "raw" {
+		fmt.Printf("%s\n", string(res.RawData))
+		return
+	}
+
+	if output == "rest" {
+		fmt.Printf("%s\n", res.Object.ToARMJson())
+		return
+	}
+
+	if output == "azure" {
+		data, err := res.Download()
+		if err != nil {
+			ErrStop("Error downloading: %s", err)
+		}
+		if len(data) == 0 {
+			ErrStop("Resource doesn't existin in Azure - "+
+				"try '%s up' to create it", APP)
+		}
+
+		tmp := map[string]json.RawMessage{}
+		json.Unmarshal(data, &tmp)
+		str, _ := json.MarshalIndent(tmp, "", "  ")
+
+		fmt.Printf("%s\n", string(str))
+		return
+	}
+
+	if output != "pretty" {
+		ErrStop("Unknown output format %q", output)
+	}
 
 	fmt.Printf("Name         : %s\n", app.Name)
 	fmt.Printf("Environment  : %s\n", NoNil(app.Properties.EnvironmentId))
@@ -530,6 +653,7 @@ func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
 			}
 		}
 	}
+	fmt.Printf("\n")
 }
 
 func NoNil(str *string) string {

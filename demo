@@ -14,19 +14,22 @@ cd testDir
 doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
 doit azx init
-comment "normally we'd ask for the subscription and resourceGroup"
+comment "normally we'd ask for the subscription and resourceGroup - but it's defaulted now"
 doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
-doit azx add aca-app -n myapp -i duglin/aca-redis --environment=demo --ingress external
+doit azx add aca-app -n myapp -i duglin/aca-lister --environment=demo --ingress external
 
 comment List the resources in the project
 doit azx list
 
 comment "lets look at the app"
 doit azx show aca-app -n myapp
+doit azx show aca-app -n myapp -o raw
+doit azx show aca-app -n myapp -o rest
+doit --ignorerc azx show aca-app -n myapp -o azure
 
 doit azx up
-comment check it on the web
+comment --pause check it on the web - show that it uses an in-memory datastore
 
 comment "now lets create a redis service and provison at the same time"
 doit azx add aca-redis -n myredis --environment=demo --provision
@@ -36,17 +39,31 @@ doit azx set defaults.provision=true
 
 doit azx update aca-app -n myapp --bind myredis
 doit azx show aca-app -n myapp
-comment go look at the app in the portal
+doit azx show aca-app -n myapp -o raw
+doit azx show aca-app -n myapp -o rest
+doit azx show aca-app -n myapp -o azure
+
+comment --pause go look at the app in the portal - show that it uses redis now
 
 doit azx down --wait
 
 comment portal should not show app or service
 
-comment see the files
-doit ls .azx/stage_default
-doit cat .azx/stage_default/*
+# comment see the files
+# doit ls .azx/stage_default
+# doit cat .azx/stage_default/*
 
-comment recreate everything in Azure
+comment recreate everything in Azure and see that it works
 doit azx up
 
+doit azx update aca-app -n myapp --unbind myredis
+comment --pause see the app in the portal again - show it is disconnected from redis
+
+comment "Now update the app via the 'az' CLI (or portal)"
+doit az containerapp update -n myapp --max-replicas=9
+
+comment "Now diff our copy with Azure"
+doit azx diff aca-app/myapp
+
+comment clean up
 doit azx down

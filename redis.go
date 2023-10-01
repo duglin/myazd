@@ -27,21 +27,21 @@ func setupRedisCmds() {
 }
 
 func setupRedisResourceDefs() {
-	ResourceDefs["Microsoft.DocumentDB/databaseAccounts"] = &ResourceDef{
+	AddResourceDef(&ResourceDef{
 		Type: "Microsoft.DocumentDB/databaseAccounts",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.DocumentDB/databaseAccounts/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
 			"APIVERSION": "2021-04-01-preview",
 		},
-	}
+	})
 
-	ResourceDefs["Microsoft.Cache/redis"] = &ResourceDef{
+	AddResourceDef(&ResourceDef{
 		Type: "Microsoft.Cache/redis",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.Cache/redis/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
 			"APIVERSION": "2023-04-01",
 		},
-	}
+	})
 
 }
 
@@ -95,14 +95,14 @@ func (r *Redis) DependsOn() []*ResourceReference {
 }
 
 func (r *Redis) ToARMJson() string {
-	saveURL := r.URL
-	r.URL = ""
+	saveID := r.ID
+	r.ID = ""
 
 	WhyMarshal = "ARM"
 	data, _ := json.MarshalIndent(r, "", "  ")
 	WhyMarshal = ""
 
-	r.URL = saveURL
+	r.ID = saveID
 	return string(data)
 }
 
@@ -121,7 +121,7 @@ func AddRedisFunc(cmd *cobra.Command, args []string) {
 	redis.ResourceGroup = Config["defaults.ResourceGroup"]
 	redis.Type = "Microsoft.Cache/redis"
 	redis.Name, _ = cmd.Flags().GetString("name")
-	redis.APIVersion = ResourceDefs[redis.Type].Defaults["APIVERSION"]
+	redis.APIVersion = GetResourceDef(redis.Type).Defaults["APIVERSION"]
 	redis.NiceType = "redis"
 
 	redis.Stage = Config["currentStage"]
@@ -144,3 +144,6 @@ func (r  *Redis) Save() {
 	r.ResourceBase.Save()
 }
 */
+
+func (r *Redis) HideServerFields(diffR ARMResource) {
+}

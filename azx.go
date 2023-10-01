@@ -51,6 +51,7 @@ var RegisteredParsers = []ARMParser{}     // FromARMJson
 type ARMResource interface {
 	DependsOn() []*ResourceReference
 	ToARMJson() string // json
+	HideServerFields(ARMResource)
 }
 
 /*
@@ -140,6 +141,14 @@ func setupRootCmds() *cobra.Command {
 	RootCmd.PersistentFlags().IntP("verbose", "v", 0, "Verbose value")
 	RootCmd.CompletionOptions.HiddenDefaultCmd = true
 
+	httpCmd := &cobra.Command{
+		Use:    "http",
+		Short:  "Do an HTTP GET",
+		Run:    httpFunc,
+		Hidden: true,
+	}
+	RootCmd.AddCommand(httpCmd)
+
 	setCmd := &cobra.Command{
 		Use:   "set",
 		Short: "Set configuration/default values",
@@ -169,6 +178,13 @@ func setupRootCmds() *cobra.Command {
 	downCmd.Flags().BoolP("wait", "w", false, "Wait for resources to vanish")
 	RootCmd.AddCommand(downCmd)
 
+	diffCmd := &cobra.Command{
+		Use:   "diff",
+		Short: "Diff resource with azure's version",
+		Run:   DiffFunc,
+	}
+	RootCmd.AddCommand(diffCmd)
+
 	stageCmd := &cobra.Command{
 		Use:   "stage",
 		Short: "Manage stages",
@@ -194,7 +210,7 @@ func setupRootCmds() *cobra.Command {
 		Short: "Show details about a resource",
 		// Run:   ShowFunc,
 	}
-	ShowCmd.Flags().StringP("output", "o", "", "Format (table*,json)")
+	// ShowCmd.Flags().StringP("output", "o", "pretty", "Format (pretty,json,arm)")
 	RootCmd.AddCommand(ShowCmd)
 
 	AddCmd = &cobra.Command{
@@ -235,48 +251,18 @@ var ResourceDefs = map[string]*ResourceDef{
 			"APIVERSION": "2021-04-01",
 		},
 	},
-
-	"Microsoft.App/managedEnvironments": &ResourceDef{
-		Type: "Microsoft.App/managedEnvironments",
-		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/managedEnvironments/${NAME}?api-version=${APIVERSION}",
-		Defaults: map[string]string{
-			"APIVERSION": "2022-10-01",
-			"WAIT":       "true",
-		},
-	},
-
-	"Microsoft.App/containerApps": &ResourceDef{
-		Type: "Microsoft.App/containerApps",
-		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerApps/${NAME}?api-version=${APIVERSION}",
-		Defaults: map[string]string{
-			"APIVERSION": "2022-11-01-preview",
-			"WAIT":       "true",
-		},
-	},
-
-	"Microsoft.DocumentDB/databaseAccounts": &ResourceDef{
-		Type: "Microsoft.DocumentDB/databaseAccounts",
-		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.DocumentDB/databaseAccounts/${NAME}?api-version=${APIVERSION}",
-		Defaults: map[string]string{
-			"APIVERSION": "2021-04-01-preview",
-		},
-	},
-
-	"Microsoft.Cache/redis": &ResourceDef{
-		Type: "Microsoft.Cache/redis",
-		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.Cache/redis/${NAME}?api-version=${APIVERSION}",
-		Defaults: map[string]string{
-			"APIVERSION": "2023-04-01",
-		},
-	},
 }
 
-func getResourceDef(resType string) *ResourceDef {
+func AddResourceDef(def *ResourceDef) {
+	ResourceDefs[strings.ToLower(def.Type)] = def
+}
+
+func GetResourceDef(resType string) *ResourceDef {
 	tmp, ok := ResourceAliases[resType]
 	if ok {
 		resType = tmp
 	}
-	resDef := ResourceDefs[resType]
+	resDef := ResourceDefs[strings.ToLower(resType)]
 	if resDef == nil {
 		ErrStop("Unknown resource type: %s", resType)
 	}
@@ -364,9 +350,9 @@ func ParseResourceReference(ref string) *ResourceReference {
 	}
 }
 
-func ParseResourceURL(ref string) *ResourceReference {
-	// subscriptions/xx/resourceGroups/xx/providers/xx/type/name
-	//  0   1       2         3      4     5  6     7
+func ParseResourceID(ref string) *ResourceReference {
+	// /subscriptions/xx/resourceGroups/xx/providers/xx/type/name
+	//         0      1       2         3      4     5  6     7
 	ref = strings.TrimLeft(ref, "/")
 	parts := strings.Split(ref, "/")
 
@@ -383,7 +369,7 @@ func ParseResourceURL(ref string) *ResourceReference {
 	rr.ResourceGroup = parts[3]
 	rr.Type = parts[5] + "/" + parts[6]
 	rr.Name = parts[7]
-	rr.APIVersion = ResourceDefs[rr.Type].Defaults["APIVERSION"]
+	rr.APIVersion = GetResourceDef(rr.Type).Defaults["APIVERSION"]
 	rr.Origin = ref
 
 	return rr
@@ -461,7 +447,7 @@ func newDoSubs(str string, props map[string]string) string {
 
 			result.WriteString(value)
 		} else {
-			res := getResourceDef(resType)
+			res := GetResourceDef(resType)
 			if apiVer == "" {
 				apiVer = res.Defaults["APIVERSION"]
 				if apiVer == "" {
@@ -519,7 +505,7 @@ func downloadResource(sub, rg, resType, resName, api string) ([]byte, error) {
 	defer log.VPrintf(2, "<Exit: downloadResource")
 
 	log.VPrintf(2, "Download: %s/%s/%s/%s@%s", sub, rg, resType, resName, api)
-	res := getResourceDef(resType)
+	res := GetResourceDef(resType)
 	props := map[string]string{
 		"SUBSCRIPTION":  sub,
 		"RESOURCEGROUP": rg,
@@ -577,11 +563,11 @@ func readIncludeFile(baseFile string, inc string) ([]byte, error) {
 
 /*
 func (r *Resource) Save() {
-	rURL := fmt.Sprintf("subscriptions/%s/resourceGroups/%s/providers/%s/containerApps/%s", r.Subscription, r.ResourceGroup, r.Type, r.Name)
+	rID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/%s/containerApps/%s", r.Subscription, r.ResourceGroup, r.Type, r.Name)
 
 	baseField := reflect.ValueOf(r.Object).Elem().FieldByName("ResourceBase")
 	base := baseField.Addr().Interface().(*ResourceBase)
-	base.URL = rURL
+	base.ID = rID
 
 	data, _ := json.MarshalIndent(r.Object, "", "  ")
 	NoErr(WriteStageFile(r.Stage, r.Filename, data))
@@ -596,7 +582,10 @@ func ResourceFromFile(stage string, name string) (*ResourceBase, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ResourceFromBytes(stage, name, data)
+}
 
+func ResourceFromBytes(stage string, name string, data []byte) (*ResourceBase, error) {
 	for _, parser := range RegisteredParsers {
 		res := parser(data)
 		if res != nil {
@@ -606,10 +595,10 @@ func ResourceFromFile(stage string, name string) (*ResourceBase, error) {
 		}
 	}
 
-	tmp := struct{ URL string }{}
+	tmp := struct{ ID string }{}
 	json.Unmarshal(data, &tmp)
 
-	ErrStop("Bad type in stage file: %s/%s (%s)", stage, name, tmp.URL)
+	ErrStop("Bad type in stage file: %s/%s (%s)", stage, name, tmp.ID)
 	return nil, nil
 }
 
@@ -700,7 +689,7 @@ func CreateConfigDir() fs.FileInfo {
 	Config["currentStage"] = "default"
 	Config["defaults.Subscription"] = "fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a"
 	Config["defaults.ResourceGroup"] = "default"
-	Config["defaults.Location"] = "EastUS"
+	Config["defaults.Location"] = "East US"
 
 	SaveConfig()
 	return fi
@@ -737,6 +726,27 @@ func SaveConfig() {
 	NoErr(err)
 	err = os.WriteFile(fileName, data, 0644)
 	NoErr(err)
+}
+
+func httpFunc(cmd *cobra.Command, args []string) {
+	if len(args) != 1 {
+		ErrStop("Must have just one arg - the URL (or PATH)")
+	}
+
+	URL := args[0]
+	if !strings.HasPrefix(URL, "http:") {
+		URL = "https://management.azure.com/" + URL
+	}
+
+	httpRes := doHTTP("GET", URL, nil)
+	if httpRes.ErrorMessage != "" {
+		ErrStop("Error: %s", httpRes.ErrorMessage)
+	}
+
+	if httpRes.StatusCode != 200 {
+		fmt.Printf("%d %s\n", httpRes.StatusCode, httpRes.Status)
+	}
+	fmt.Printf("\n%s\n", string(httpRes.Body))
 }
 
 func SetFunc(cmd *cobra.Command, args []string) {
@@ -836,6 +846,39 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 	}
 }
 
+func DiffFunc(cmd *cobra.Command, args []string) {
+	log.VPrintf(2, ">Enter: DeprovisionFunc: %q", args)
+	defer log.VPrintf(2, "<Exit: DeprovisionFunc")
+
+	LoadConfig()
+
+	stage := Config["currentStage"]
+	if stage == "" {
+		ErrStop("No current stage defined")
+	}
+
+	if len(args) == 1 {
+		arg := args[0]
+		argTmp := strings.ReplaceAll(arg, "/", "-")
+		res, err := ResourceFromFile(stage, argTmp+".json")
+		NoErr(err, "Error reading %q: %s", arg, err)
+
+		diff, err := res.Diff()
+		NoErr(err)
+		fmt.Printf("%s\n", diff)
+	} else {
+		resources := GetStageResources("")
+		for _, res := range resources {
+			diff, err := res.Diff()
+			NoErr(err)
+			if len(diff) == 0 {
+				continue
+			}
+			fmt.Printf("%s:\n%s\n", res.NiceType+"/"+res.Name, diff)
+		}
+	}
+}
+
 func StageListFunc(cmd *cobra.Command, args []string) {
 	LoadConfig()
 	for _, stage := range GetStages() {
@@ -895,7 +938,7 @@ type ResourceBase struct {
 	APIVersion    string `json:"-"`
 	NiceType      string `json:"-"`
 
-	URL     string      `json:"url,omitempty"`
+	ID      string      `json:"id,omitempty"`
 	Object  ARMResource `json:"-"` // Basically "self". Owning ARM Object
 	RawData []byte      `json:"-"`
 }
@@ -926,8 +969,8 @@ func (r *ResourceBase) Save() {
 	log.VPrintf(2, ">Enter: Save")
 	defer log.VPrintf(2, "<Enter: Save")
 
-	r.URL = r.AsID()
-	Resources[r.URL] = r.Object
+	r.ID = r.AsID()
+	Resources[r.ID] = r.Object
 
 	depends := r.Object.DependsOn()
 	for _, dep := range depends {
@@ -962,7 +1005,7 @@ func (r *ResourceBase) Provision() {
 
 	data := r.Object.ToARMJson()
 	resURL := r.AsURL()
-	resDef := ResourceDefs[r.Type]
+	resDef := GetResourceDef(r.Type)
 
 	fmt.Printf("Provision: %s/%s\n", r.NiceType, r.Name)
 	log.VPrintf(2, "URL: %s", resURL)
@@ -1031,12 +1074,57 @@ func (r *ResourceBase) Exists() bool {
 	return true
 }
 
-func ToJson(obj interface{}) string {
-	data, _ := json.MarshalIndent(obj, "", "  ")
-	return string(data)
+func (r *ResourceBase) Download() ([]byte, error) {
+	log.VPrintf(2, ">Enter: RB:Download (%s)", r.NiceType+"/"+r.Name)
+	defer log.VPrintf(2, "<Exit: RB:Download")
+
+	resURL := r.AsURL()
+
+	log.VPrintf(2, "URL: %s", resURL)
+
+	data, err := downloadResource(r.Subscription, r.ResourceGroup,
+		r.Type, r.Name, r.APIVersion)
+
+	return data, err
 }
 
-func StringPtr(str string) *string { return &str }
+func (r *ResourceBase) Diff() (string, error) {
+	log.VPrintf(2, ">Enter: RB:Diff (%s)", r.NiceType+"/"+r.Name)
+	defer log.VPrintf(2, "<Exit: RB:Diff")
+
+	// Save it as ARM Json and then covert it back into a ResourceBase
+	tmp := map[string]json.RawMessage{}
+	json.Unmarshal([]byte(r.Object.ToARMJson()), &tmp)
+	buf, _ := json.Marshal(tmp)
+	res, err := ResourceFromBytes(r.Stage, r.NiceType+"/"+r.Name, buf)
+	if err != nil {
+		return "", err
+	}
+
+	// Now get the Azure version
+	azureData, err := res.Download()
+	NoErr(err, "Error downloading %q: %s", r.NiceType+"/"+r.Name, err)
+	if len(azureData) == 0 {
+		return "", fmt.Errorf("Not in Azure")
+	}
+	azure, err := ResourceFromBytes(res.Stage, res.Name, azureData)
+	if err != nil {
+		return "", err
+	}
+
+	if strings.EqualFold(res.ID, azure.ID) {
+		azure.ID = res.ID
+	}
+	azure.Object.HideServerFields(res.Object)
+
+	srcJson, _ := json.MarshalIndent(res.Object, "", "  ")
+	tgtJson, _ := json.MarshalIndent(azure.Object, "", "  ")
+
+	srcJson = ShrinkJson(srcJson)
+	tgtJson = ShrinkJson(tgtJson)
+
+	return string(Diff("local", srcJson, "azure", tgtJson)), nil
+}
 
 func SetJson(obj interface{}, format string, args ...interface{}) {
 	str := fmt.Sprintf(format, args...)
