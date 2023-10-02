@@ -870,11 +870,14 @@ func DiffFunc(cmd *cobra.Command, args []string) {
 		resources := GetStageResources("")
 		for _, res := range resources {
 			diff, err := res.Diff()
-			NoErr(err)
-			if len(diff) == 0 {
-				continue
+			name := res.NiceType + "/" + res.Name
+			if err != nil {
+				fmt.Printf("%s: %s\n", name, err)
+			} else if len(diff) == 0 {
+				// fmt.Printf("%s: same\n", name)
+			} else {
+				fmt.Printf("diff %s:\n%s\n", name, diff)
 			}
-			fmt.Printf("%s:\n%s\n", res.NiceType+"/"+res.Name, diff)
 		}
 	}
 }

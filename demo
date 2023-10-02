@@ -7,36 +7,57 @@ export PATH=$PATH:$PWD
 clear
 set -e
 
+comment "Create and cd into a new dir to show we're starting with nothing"
 rm -rf testDir
 doit mkdir testDir
 doit cd testDir
 cd testDir
 doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
+comment 'Init azx'
 doit azx init
-comment "normally we'd ask for the subscription and resourceGroup - but it's defaulted now"
+comment --nolf "normally we'd ask for the subscription and resourceGroup"
+comment "but it's defaulted now"
 doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
+comment "Notice it created a hidden .azx dir to hold our IaC files"
 
+comment --nolf 'Now create an ACA app with minmal info to make it available'
+comment 'on the web'
 doit azx add aca-app -n myapp -i duglin/aca-lister --environment=demo --ingress external
+comment "This is only known locally, we haven't push anything to Azure yet"
 
 comment List the resources in the project
 doit azx list
 
-comment "lets look at the app"
+comment "lets look at the app. First human readable format"
 doit azx show aca-app -n myapp
+
+comment --nolf "Now, look under the covers at its IaC file. Notice there's no"
+comment --nolf "info in there that the user didn't provide. So while the"
+comment --nolf "exact syntax  might be new to folks, it should be an easy"
+comment "mapping from what they specific on the CLI"
 doit azx show aca-app -n myapp -o raw
+
+comment --nolf "For geeks, show what the REST API will send. Notice some ACA"
+comment "required fields and smart defaults are filled in automatically"
 doit azx show aca-app -n myapp -o rest
+
+comment --nolf 'Finally, ask to see what this looks like on Azure. This will'
+comment "fail because we haven't provisioned it yet to Azure"
 doit --ignorerc azx show aca-app -n myapp -o azure
 
+comment "Now we'll provision everything (the app)"
 doit azx up
 comment --pause check it on the web - show that it uses an in-memory datastore
 
 comment "now lets create a redis service and provison at the same time"
 doit azx add aca-redis -n myredis --environment=demo --provision
 
-comment turn on auto-provision
+comment "turn on auto-provision because I'm getting lazy"
 doit azx set defaults.provision=true
 
+comment --nolf "Update the app to connect to Redis and show app forms of the"
+comment "app to show the new 'binding' section, as well what Azure has"
 doit azx update aca-app -n myapp --bind myredis
 doit azx show aca-app -n myapp
 doit azx show aca-app -n myapp -o raw
@@ -45,6 +66,7 @@ doit azx show aca-app -n myapp -o azure
 
 comment --pause go look at the app in the portal - show that it uses redis now
 
+comment "take it all down, and wait for azure to fully delete them"
 doit azx down --wait
 
 comment portal should not show app or service
@@ -53,19 +75,34 @@ comment portal should not show app or service
 # doit ls .azx/stage_default
 # doit cat .azx/stage_default/*
 
-comment recreate everything in Azure and see that it works
+comment "recreate everything in Azure and see that it works"
 doit azx up
 
+comment "Unbind just for completness"
 doit azx update aca-app -n myapp --unbind myredis
 comment --pause see the app in the portal again - show it is disconnected from redis
 
-comment "Now update the app via the 'az' CLI (or portal)"
+comment --nolf 'Now update the app via the "az" CLI (or portal) to see how we'
+comment --nolf 'can deal with out-of-band changes to the IaC stuff. Think of'
+comment --nolf 'how you deal with someone changing a git repo - you diff and'
+comment 'rebase'
 doit az containerapp update -n myapp --max-replicas=9
 
-comment "Now diff our copy with Azure"
-doit azx diff aca-app/myapp
+comment 'Now diff our copy with Azure'
+doit azx diff
+
+comment 'rebase is not implemented yet, but you get the idea...'
 
 comment clean up
 doit azx down
 
 rm out cmds
+
+comment --nolf 'The key aspects of this are: '
+comment --nolf '- while it shows the IaC file as an FYI, viewing or editing'
+comment --nolf '  them  directly should be unnecessary '
+comment --nolf '- provides a nice (az-like) CLI experience for devs w/o '
+comment --nolf '  losing the ability to do IaC (declarative) work. All of it '
+comment --nolf '  can be checked-in'
+comment --nolf '- provides a possible path (diff/rebase) for dealing with'
+comment '  updates to the resources via non-azx UXs'
