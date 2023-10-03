@@ -797,8 +797,11 @@ func ProvisionFunc(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		resources := GetStageResources("")
-		for _, res := range resources {
-			res.Provision()
+		// Until we get the dependency stuff done
+		// for _, res := range resources {
+		for i, _ := range resources {
+			// res.Provision()
+			resources[len(resources)-i-1].Provision()
 		}
 	}
 }

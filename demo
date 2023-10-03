@@ -78,7 +78,7 @@ comment portal should not show app or service
 comment "recreate everything in Azure and see that it works"
 doit azx up
 
-comment "Unbind just for completness"
+comment "Unbind just for completeness"
 doit azx update aca-app -n myapp --unbind myredis
 comment --pause see the app in the portal again - show it is disconnected from redis
 
@@ -106,3 +106,6 @@ comment --nolf '  losing the ability to do IaC (declarative) work. All of it '
 comment --nolf '  can be checked-in'
 comment --nolf '- provides a possible path (diff/rebase) for dealing with'
 comment '  updates to the resources via non-azx UXs'
+
+cd ..
+rm -f cmds out
