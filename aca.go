@@ -120,7 +120,7 @@ func setupAcaResourceDefs() {
 		Type: "Microsoft.App/containerApps",
 		URL:  "https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.App/containerApps/${NAME}?api-version=${APIVERSION}",
 		Defaults: map[string]string{
-			"APIVERSION": "2022-11-01-preview",
+			"APIVERSION": "2023-05-02-preview",
 			"WAIT":       "true",
 		},
 	})
@@ -272,6 +272,26 @@ func (asb *AcaAppServiceBind) MarshalJSON() ([]byte, error) {
 	return json.Marshal(tmpAsb)
 }
 
+func (asb *AcaAppServiceBind) ResolveServiceId() *ResourceReference {
+	ref := asb.ServiceId
+	if ref == nil || *ref == "" {
+		ErrStop("AcaApp is missing a ServiceId in a binding")
+	}
+
+	// Set defaults
+	resRef := &ResourceReference{
+		Subscription:  Config["defaults.Subscription"],
+		ResourceGroup: Config["defaults.ResourceGroup"],
+		Type:          "Microsoft.App/containerapps", // Can't assume
+		APIVersion:    GetResourceDef("Microsoft.App/containerapps").Defaults["APIVERSION"],
+		Origin:        *(asb.ServiceId),
+	}
+
+	// Now, override with env values
+	resRef.Populate(*ref)
+
+	return resRef
+}
 func (aat *AcaAppTemplate) MarshalJSON() ([]byte, error) {
 	tmpAat := *aat
 	if WhyMarshal == "ARM" {
@@ -323,9 +343,20 @@ type AcaApp struct {
 func (app *AcaApp) DependsOn() []*ResourceReference {
 	refs := []*ResourceReference{}
 
-	if app.Properties != nil {
-		resRef := app.Properties.ResolveEnvironmentId()
+	if props := app.Properties; props != nil {
+		resRef := props.ResolveEnvironmentId()
 		refs = append(refs, resRef)
+
+		if template := props.Template; template != nil {
+			if sbs := template.ServiceBinds; sbs != nil {
+				for _, sb := range sbs {
+					if sb.ServiceId != nil {
+						resRef := sb.ResolveServiceId()
+						refs = append(refs, resRef)
+					}
+				}
+			}
+		}
 	}
 
 	return refs

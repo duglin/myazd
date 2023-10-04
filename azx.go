@@ -797,6 +797,23 @@ func ProvisionFunc(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		resources := GetStageResources("")
+
+		type resNode struct {
+			ref       *ResourceReference
+			dependsOn []*ResourceReference
+			level     int
+		}
+
+		for _, res := range resources {
+			depsRefs := res.Object.DependsOn()
+			fmt.Printf("%q -> deps: %q\n", res.Name, depsRefs)
+			for _, dr := range depsRefs {
+				if Resources[dr.AsID()] == nil {
+					fmt.Printf("Dep: %q not there\n", dr.Name)
+				}
+			}
+		}
+
 		// Until we get the dependency stuff done
 		// for _, res := range resources {
 		for i, _ := range resources {
@@ -947,6 +964,16 @@ type ResourceBase struct {
 	ID      string      `json:"id,omitempty"`
 	Object  ARMResource `json:"-"` // Basically "self". Owning ARM Object
 	RawData []byte      `json:"-"`
+}
+
+func (r *ResourceBase) AsRef() *ResourceReference {
+	return &ResourceReference{
+		Subscription:  r.Subscription,
+		ResourceGroup: r.ResourceGroup,
+		Type:          r.Type,
+		Name:          r.Name,
+		APIVersion:    r.APIVersion,
+	}
 }
 
 func (r *ResourceBase) AsID() string {
