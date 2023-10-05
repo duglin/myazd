@@ -43,7 +43,6 @@ var AddCmd *cobra.Command
 var UpdateCmd *cobra.Command
 
 var Config = map[string]string{}
-var Resources = map[string]ARMResource{}
 
 type ARMParser func([]byte) *ResourceBase // FromARMJson
 var RegisteredParsers = []ARMParser{}     // FromARMJson
@@ -53,30 +52,6 @@ type ARMResource interface {
 	ToARMJson() string // json
 	HideServerFields(ARMResource)
 }
-
-/*
-type Resource struct {
-	Stage    string
-	Filename string
-
-	Subscription  string
-	ResourceGroup string
-	Type          string
-	Name          string
-	APIVersion    string
-
-	Object ARMResource
-
-	FromFile   string // filename, URL or stdin(-)
-	FromServer bool
-
-	RawData  []byte
-	FullJson map[string]json.RawMessage // Json + extra attrs (sub,rg,type,name)
-	Json     map[string]json.RawMessage
-
-	DependsOn []string // [[sub:]rg:]type/name[@api]
-}
-*/
 
 func NoErr(err error, args ...interface{}) {
 	if err == nil {
@@ -168,6 +143,7 @@ func setupRootCmds() *cobra.Command {
 		Short: "Provision all resources",
 		Run:   ProvisionFunc,
 	}
+	upCmd.Flags().BoolP("dep", "d", false, "Provision all dependencies")
 	RootCmd.AddCommand(upCmd)
 
 	downCmd := &cobra.Command{
@@ -561,22 +537,6 @@ func readIncludeFile(baseFile string, inc string) ([]byte, error) {
 	return readJsonFile(file)
 }
 
-/*
-func (r *Resource) Save() {
-	rID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/%s/containerApps/%s", r.Subscription, r.ResourceGroup, r.Type, r.Name)
-
-	baseField := reflect.ValueOf(r.Object).Elem().FieldByName("ResourceBase")
-	base := baseField.Addr().Interface().(*ResourceBase)
-	base.ID = rID
-
-	data, _ := json.MarshalIndent(r.Object, "", "  ")
-	NoErr(WriteStageFile(r.Stage, r.Filename, data))
-}
-
-func (r *Resource) Load() {
-}
-*/
-
 func ResourceFromFile(stage string, name string) (*ResourceBase, error) {
 	data, err := ReadStageFile(stage, name)
 	if err != nil {
@@ -619,7 +579,7 @@ func GenerateConfigFileName(stage string, name string) string {
 	return path.Join(fi.Name(), "stage_"+stage, name)
 }
 
-func GetStageResources(stage string) []*ResourceBase {
+func GetStageResources(stage string) map[string]*ResourceBase { // id->*RB
 	if stage == "" {
 		stage = Config["currentStage"]
 		if stage == "" {
@@ -633,11 +593,11 @@ func GetStageResources(stage string) []*ResourceBase {
 	entries, err := os.ReadDir(dir)
 	NoErr(err, "Error listing stage %q: %s", stage, err)
 
-	result := []*ResourceBase{}
+	result := map[string]*ResourceBase{}
 	for _, entry := range entries {
 		res, err := ResourceFromFile(stage, entry.Name())
 		NoErr(err, "Error reading \"%s/%s\": %s", stage, entry.Name(), err)
-		result = append(result, res)
+		result[strings.ToLower(res.AsID())] = res
 	}
 
 	return result
@@ -777,11 +737,106 @@ func InitFunc(cmd *cobra.Command, args []string) {
 	CreateConfigDir()
 }
 
+// Everything at one level can be deployed at the same time.
+// Deploy starting at Level 0, then 1, then 2....
+type DependencyTree [][]*ResourceBase // Level #(0-based) / List of *RBs
+
+func BuildDependencyTree(resources map[string]*ResourceBase, findDeps bool) *DependencyTree {
+	dTree := DependencyTree{}
+
+	type resNode struct {
+		res       *ResourceBase
+		dependsOn map[string]bool // ID->bool
+		level     int
+	}
+
+	controlResources := map[string]*ResourceBase{}
+	if findDeps {
+		controlResources = GetStageResources("")
+	} else {
+		for _, r := range resources {
+			controlResources[r.AsID()] = r
+		}
+	}
+
+	// Build up the list of nodes
+	checkDepList := []*ResourceBase{}
+	for _, res := range resources {
+		checkDepList = append(checkDepList, res)
+	}
+
+	nodes := map[string]*resNode{}
+	for len(checkDepList) > 0 {
+		res := checkDepList[0]
+		checkDepList = checkDepList[1:]
+
+		// Skip resource if we already did it
+		if nodes[res.AsID()] != nil {
+			continue
+		}
+
+		node := &resNode{
+			res:       res,
+			dependsOn: map[string]bool{}, // id->bool
+			level:     0,
+		}
+		for _, dep := range res.Object.DependsOn() {
+			// Only keep deps we control
+			// if resources[strings.ToLower(dep.AsID())] != nil {
+			depResourceBase := controlResources[strings.ToLower(dep.AsID())]
+			if depResourceBase != nil {
+				node.dependsOn[strings.ToLower(dep.AsID())] = true
+
+				// Add dep to make sure we get it's list too
+				checkDepList = append(checkDepList, depResourceBase)
+			}
+		}
+		nodes[strings.ToLower(res.AsID())] = node
+	}
+
+	for len(nodes) != 0 {
+		level := []*ResourceBase{}
+
+		// Find all nodes w/no deps
+		delIDs := []string{}
+		for id, node := range nodes {
+			if len(node.dependsOn) != 0 {
+				continue
+			}
+			// TODO save list then we can do them all at once
+			level = append(level, node.res)
+			delIDs = append(delIDs, id)
+		}
+		if len(delIDs) == 0 {
+			ErrStop("Circular list: %q", nodes)
+		}
+
+		// Remove added nodes from the full list
+		for _, id := range delIDs {
+			delete(nodes, id)
+		}
+
+		// Remove all of those same nodes from the dependsOn list of remaining
+		for _, id := range delIDs {
+			for _, node := range nodes {
+				delete(node.dependsOn, id)
+			}
+		}
+
+		dTree = append(dTree, level)
+	}
+
+	return &dTree
+}
+
 func ProvisionFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: ProvisionFunc: %q", args)
 	defer log.VPrintf(2, "<Exit: ProvisionFunc")
 
 	LoadConfig()
+
+	resources := map[string]*ResourceBase{}
+	doDep, _ := cmd.Flags().GetBool("dep")
 
 	if len(args) > 0 {
 		stage := Config["currentStage"]
@@ -793,32 +848,24 @@ func ProvisionFunc(cmd *cobra.Command, args []string) {
 			argTmp := strings.ReplaceAll(arg, "/", "-")
 			res, err := ResourceFromFile(stage, argTmp+".json")
 			NoErr(err, "Error reading %q: %s", arg, err)
-			res.Provision()
+			resources[res.AsID()] = res
 		}
 	} else {
-		resources := GetStageResources("")
+		resources = GetStageResources("")
+		doDep = true
+	}
 
-		type resNode struct {
-			ref       *ResourceReference
-			dependsOn []*ResourceReference
-			level     int
-		}
+	if doDep {
+		dTree := BuildDependencyTree(resources, doDep)
 
-		for _, res := range resources {
-			depsRefs := res.Object.DependsOn()
-			fmt.Printf("%q -> deps: %q\n", res.Name, depsRefs)
-			for _, dr := range depsRefs {
-				if Resources[dr.AsID()] == nil {
-					fmt.Printf("Dep: %q not there\n", dr.Name)
-				}
+		for _, level := range *dTree {
+			for _, res := range level {
+				res.Provision()
 			}
 		}
-
-		// Until we get the dependency stuff done
-		// for _, res := range resources {
-		for i, _ := range resources {
-			// res.Provision()
-			resources[len(resources)-i-1].Provision()
+	} else {
+		for _, res := range resources {
+			res.Provision()
 		}
 	}
 }
@@ -829,7 +876,8 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 
 	LoadConfig()
 
-	resources := []*ResourceBase{}
+	resources := map[string]*ResourceBase{}
+	wait, _ := cmd.Flags().GetBool("wait")
 
 	if len(args) > 0 {
 		stage := Config["currentStage"]
@@ -841,24 +889,25 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 			argTmp := strings.ReplaceAll(arg, "/", "-")
 			res, err := ResourceFromFile(stage, argTmp+".json")
 			NoErr(err, "Error reading %q: %s", arg, err)
-			resources = append(resources, res)
+			resources[res.AsID()] = res
 		}
 	} else {
 		resources = GetStageResources("")
 	}
 
+	// TODO Should order the list given based on dependencies
 	for _, res := range resources {
 		res.Deprovision()
 	}
 
-	wait, _ := cmd.Flags().GetBool("wait")
+	// TODO wait on a per level basis
 	if wait {
 		fmt.Printf("Waiting for them to disappear...\n")
 		for len(resources) > 0 {
 			time.Sleep(1 * time.Second)
-			for i, res := range resources {
+			for id, res := range resources {
 				if !res.Exists() {
-					resources = append(resources[:i], resources[i+1:]...)
+					delete(resources, id)
 					break
 				}
 			}
@@ -867,8 +916,8 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 }
 
 func DiffFunc(cmd *cobra.Command, args []string) {
-	log.VPrintf(2, ">Enter: DeprovisionFunc: %q", args)
-	defer log.VPrintf(2, "<Exit: DeprovisionFunc")
+	log.VPrintf(2, ">Enter: DiffFunc: %q", args)
+	defer log.VPrintf(2, "<Exit: DiffFunc")
 
 	LoadConfig()
 
@@ -1003,24 +1052,28 @@ func (r *ResourceBase) Save() {
 	defer log.VPrintf(2, "<Enter: Save")
 
 	r.ID = r.AsID()
-	Resources[r.ID] = r.Object
+	// Resources[strings.ToLower(r.ID)] = r.Object
 
+	resources := GetStageResources("")
 	depends := r.Object.DependsOn()
 	for _, dep := range depends {
-		id := dep.AsID()
-		res := Resources[id]
+		id := strings.ToLower(dep.AsID())
+		// res := Resources[id]
+		res := resources[id]
 		if res == nil {
 			log.VPrintf(2, "%q isn't local", dep.Name)
 
-			data, err := downloadResource(dep.Subscription,
-				dep.ResourceGroup, dep.Type, dep.Name, dep.APIVersion)
-			if err != nil {
-				ErrStop("Error downloading %q: %s", id, err)
-			}
-			if len(data) == 0 {
-				ErrStop("Can't find dependency for %s/%s: %s",
-					r.NiceType, r.Name, dep.Origin)
-			}
+			/*
+				data, err := downloadResource(dep.Subscription,
+					dep.ResourceGroup, dep.Type, dep.Name, dep.APIVersion)
+				if err != nil {
+					ErrStop("Error downloading %q: %s", id, err)
+				}
+				if len(data) == 0 {
+					ErrStop("Can't find dependency for %s/%s: %s",
+						r.NiceType, r.Name, dep.Origin)
+				}
+			*/
 		}
 	}
 

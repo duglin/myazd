@@ -218,6 +218,17 @@ func (aap *AcaAppProperties) MarshalJSON() ([]byte, error) {
 		envRef := aap.ResolveEnvironmentId()
 		tmpAap.EnvironmentId = StringPtr(envRef.AsID())
 		tmpAap.WorkloadProfileName = StringPtr("Consumption")
+
+		// Temporary to get around an ACA NPE
+		if tmpAap.Template == nil {
+			tmpAap.Template = &AcaAppTemplate{
+				Containers: []*AcaAppContainer{{
+					Image: StringPtr("redis"),
+					Name:  StringPtr("redis"),
+				}},
+			}
+		}
+		// END OF Temporary
 	}
 	return json.Marshal(tmpAap)
 }
@@ -704,7 +715,7 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 	// TODO make sure 'environ' exists
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
-	if !set && app.Properties.EnvironmentId == nil {
+	if !set && app.Properties != nil && app.Properties.EnvironmentId == nil {
 		env := Config["defaults.aca-env"]
 		if env == "" {
 			ErrStop("Missing the aca-env value. "+
