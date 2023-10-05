@@ -1000,8 +1000,7 @@ func ResourceAddFunc(cmd *cobra.Command, args []string) {
 }
 
 type ResourceBase struct {
-	Stage    string `json:"-"`
-	Filename string `json:"-"`
+	ID string `json:"id,omitempty"`
 
 	Subscription  string `json:"-"`
 	ResourceGroup string `json:"-"`
@@ -1010,7 +1009,9 @@ type ResourceBase struct {
 	APIVersion    string `json:"-"`
 	NiceType      string `json:"-"`
 
-	ID      string      `json:"id,omitempty"`
+	Stage    string `json:"-"`
+	Filename string `json:"-"`
+
 	Object  ARMResource `json:"-"` // Basically "self". Owning ARM Object
 	RawData []byte      `json:"-"`
 }

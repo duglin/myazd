@@ -32,11 +32,11 @@ doit azx list
 comment "lets look at the app. " # First human readable format"
 doit azx show aca-app -n myapp
 
-# comment --nolf "Now, look under the covers at its IaC file. Notice there's no"
-# comment --nolf "info in there that the user didn't provide. So while the"
-# comment --nolf "exact syntax  might be new to folks, it should be an easy"
-# comment "mapping from what they specific on the CLI"
-# doit azx show aca-app -n myapp -o raw
+comment "Now, look under the covers at its IaC file."
+doit azx show aca-app -n myapp -o raw
+comment --nolf "Notice there's nothing in there that the user didn't provide."
+comment --nolf "So while the exact syntax might be ne , it should be an easy"
+comment "mapping from what they specific on the CLI"
 
 # comment --nolf "For geeks, show what the REST API will send. Notice some ACA"
 # comment "required fields and smart defaults are filled in automatically"
@@ -56,7 +56,7 @@ doit azx add aca-redis -n myredis --environment=demo --provision
 comment "turn on auto-provision because I'm getting lazy"
 doit azx set defaults.provision=true
 
-comment --nolf "Update the app to connect to Redis and show app forms of the"
+comment "Update the app to connect to Redis and show app forms of the"
 doit azx update aca-app -n myapp --bind myredis
 
 comment "app to show the new 'binding' section" # , as well what Azure has"
@@ -70,7 +70,8 @@ comment --pause go look at the app in the portal - show that it uses redis now
 comment "take it all down, and wait for azure to fully delete them"
 doit azx down --wait
 
-comment portal should not show app or service
+comment "Gone from Azure, but still defined in local IaC files"
+comment "Portal should not show app or service"
 
 # comment see the files
 # doit ls .azx/stage_default
@@ -119,7 +120,7 @@ doit azx down
 rm out cmds
 
 comment --nolf 'The key aspects of this are: '
-comment --nolf '- IaC files include just minimal info, so easy to read'
+comment --nolf "- IaC files include just minimal info, so easy it's to read"
 comment --nolf "  but can easily ask to see the defaults and Azure's state"
 comment --nolf '- while it shows the IaC files as an FYI, viewing or editing'
 comment --nolf '  them  directly should be unnecessary'
