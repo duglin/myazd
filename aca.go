@@ -88,10 +88,11 @@ func setupAcaCmds() {
 	cmd = &cobra.Command{
 		Use:   "aca-app",
 		Short: "Show details about an Azure Container App Application",
-		Run:   ShowAcaAppFunc,
+		Run:   ShowFunc,
 	}
 	cmd.Flags().StringP("name", "n", "", "Name of app")
-	cmd.Flags().StringP("output", "o", "pretty", "Format (pretty,raw,rest,azure)")
+	cmd.Flags().String("from", "iac", "Show data from: iac, rest, azure")
+	cmd.Flags().StringP("output", "o", "pretty", "Format (pretty,json)")
 	cmd.MarkFlagRequired("name")
 	ShowCmd.AddCommand(cmd)
 
@@ -114,10 +115,11 @@ func setupAcaCmds() {
 	cmd = &cobra.Command{
 		Use:   "aca-redis",
 		Short: "Show details about an Azure Container App Redis Service",
-		Run:   ShowAcaServiceFunc,
+		Run:   ShowFunc,
 	}
 	cmd.Flags().StringP("name", "n", "", "Name of service")
-	cmd.Flags().StringP("output", "o", "pretty", "Format (pretty,raw,rest,azure)")
+	cmd.Flags().String("from", "iac", "Show data from: iac, rest, azure")
+	cmd.Flags().StringP("output", "o", "pretty", "Format (pretty,json)")
 	cmd.MarkFlagRequired("name")
 	ShowCmd.AddCommand(cmd)
 
@@ -390,6 +392,75 @@ func (app *AcaApp) DependsOn() []*ResourceReference {
 	return refs
 }
 
+func (app *AcaApp) ToForm() *Form {
+	res := &app.ResourceBase
+
+	if res.NiceType == "aca-redis" {
+		form := NewForm()
+		form.AddProp("Name", app.Name)
+		form.AddProp("Service", NotNil(app.Properties.Configuration.Service.Type))
+		return form
+	}
+
+	// Must be a normal app
+	ingress := "internal"
+	port := ""
+
+	if app.Properties != nil && app.Properties.Configuration != nil &&
+		app.Properties.Configuration.Ingress != nil {
+		ing := app.Properties.Configuration.Ingress
+		if ing.External != nil && *(ing.External) == true {
+			ingress = "external"
+		}
+		if ing.TargetPort != nil {
+			port = fmt.Sprintf("%d", *(ing.TargetPort))
+		}
+	}
+
+	form := NewForm()
+	form.AddProp("Name", app.Name)
+	form.AddProp("Environment", NotNil(app.Properties.EnvironmentId))
+	form.AddProp("Location", NotNil(app.Location))
+	form.AddProp("Subscription", app.Subscription)
+	form.AddProp("ResourceGroup", app.ResourceGroup)
+
+	form.AddProp("Ingress", ingress).Space = true
+	if port != "" {
+		form.AddProp("Port", port)
+	}
+
+	template := app.Properties.Template
+	if template != nil {
+		cont := template.Containers
+		if cont == nil || len(cont) == 0 {
+			form.AddProp("Container", "none").Space = true
+		} else {
+			nf := form.AddArray("Containers")
+			nf.Space = true
+			for _, c := range cont {
+				cf := nf.AddSection("")
+				cf.AddProp("Image", NotNil(c.Image))
+			}
+		}
+
+		// scale := template.Scale
+
+		binds := template.ServiceBinds
+		if len(binds) > 0 {
+			nf := form.AddArray("Bindings")
+			nf.Space = true
+			for _, bind := range binds {
+				nf.AddProp("Service", NotNil(bind.ServiceId))
+				if bind.Name != nil {
+					nf.AddProp("Name", NotNil(bind.Name))
+				}
+			}
+		}
+	}
+
+	return form
+}
+
 func (app *AcaApp) ToARMJson() string {
 	WhyMarshal = "ARM"
 	data, _ := json.MarshalIndent(app, "", "  ")
@@ -525,56 +596,6 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 	}
 }
 
-func ShowAcaServiceFunc(cmd *cobra.Command, args []string) {
-	log.VPrintf(2, ">Enter: ShowAcaServiceFunc (%q)", args)
-	defer log.VPrintf(2, "<Exit: ShowAcaServiceFunc")
-
-	stage := GetConfigProperty("currentStage")
-	name, _ := cmd.Flags().GetString("name")
-	name = fmt.Sprintf("%s-%s.json", cmd.CalledAs(), name)
-	res, err := ResourceFromFile(stage, name)
-	NoErr(err, "Resource %s/%s not found", cmd.CalledAs(), name)
-
-	app := res.Object.(*AcaApp)
-
-	output, _ := cmd.Flags().GetString("output")
-
-	if output == "raw" {
-		fmt.Printf("%s\n", string(res.RawData))
-		return
-	}
-
-	if output == "rest" {
-		fmt.Printf("%s\n", res.Object.ToARMJson())
-		return
-	}
-
-	if output == "azure" {
-		data, err := res.Download()
-		if err != nil {
-			ErrStop("Error downloading: %s", err)
-		}
-		if len(data) == 0 {
-			ErrStop("Resource doesn't existin in Azure - "+
-				"try '%s up' to create it", APP)
-		}
-
-		tmp := map[string]json.RawMessage{}
-		json.Unmarshal(data, &tmp)
-		str, _ := json.MarshalIndent(tmp, "", "  ")
-
-		fmt.Printf("%s\n", string(str))
-		return
-	}
-
-	if output != "pretty" {
-		ErrStop("Unknown output format %q", output)
-	}
-
-	fmt.Printf("Name: %s\n", app.Name)
-	fmt.Printf("Service: %s\n", NotNil(app.Properties.Configuration.Service.Type))
-}
-
 func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: AddAcaAppFunc (%q)", args)
 	defer log.VPrintf(2, "<Exit: AddAcaAppFunc")
@@ -625,118 +646,6 @@ func UpdateAcaAppFunc(cmd *cobra.Command, args []string) {
 	if p || GetConfigProperty("defaults.provision") == "true" {
 		app.Provision()
 	}
-}
-
-func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
-	log.VPrintf(2, ">Enter: ShowAcaAppFunc (%q)", args)
-	defer log.VPrintf(2, "<Exit: ShowAcaAppFunc")
-
-	stage := GetConfigProperty("currentStage")
-	name, _ := cmd.Flags().GetString("name")
-	name = fmt.Sprintf("%s-%s.json", "aca-app", name)
-	res, err := ResourceFromFile(stage, name)
-	NoErr(err, "Resource %s/%s not found", cmd.CalledAs(), name)
-
-	app := res.Object.(*AcaApp)
-
-	output, _ := cmd.Flags().GetString("output")
-
-	if output == "raw" {
-		fmt.Printf("%s\n", string(res.RawData))
-		return
-	}
-
-	if output == "rest" {
-		fmt.Printf("%s\n", res.Object.ToARMJson())
-		return
-	}
-
-	if output == "azure" {
-		data, err := res.Download()
-		if err != nil {
-			ErrStop("Error downloading: %s", err)
-		}
-		if len(data) == 0 {
-			ErrStop("Resource doesn't existin in Azure - "+
-				"try '%s up' to create it", APP)
-		}
-
-		tmp := map[string]json.RawMessage{}
-		json.Unmarshal(data, &tmp)
-		str, _ := json.MarshalIndent(tmp, "", "  ")
-
-		fmt.Printf("%s\n", string(str))
-		return
-	}
-
-	if output != "pretty" {
-		ErrStop("Unknown output format %q", output)
-	}
-
-	fmt.Printf("Name         : %s\n", app.Name)
-	fmt.Printf("Environment  : %s\n", NoNil(app.Properties.EnvironmentId))
-	fmt.Printf("Location     : %s\n", NotNil(app.Location))
-	// fmt.Printf("\n")
-	fmt.Printf("Subscription : %s\n", app.Subscription)
-	fmt.Printf("ResourceGroup: %s\n", app.ResourceGroup)
-
-	ingress := "internal"
-	port := ""
-
-	if app.Properties != nil && app.Properties.Configuration != nil &&
-		app.Properties.Configuration.Ingress != nil {
-		ing := app.Properties.Configuration.Ingress
-		if ing.External != nil && *(ing.External) == true {
-			ingress = "external"
-		}
-		if ing.TargetPort != nil {
-			port = fmt.Sprintf("%s", ing.TargetPort)
-		}
-	}
-
-	fmt.Printf("\n")
-	fmt.Printf("Ingress: %s\n", ingress)
-	if port != "" {
-		fmt.Printf("Port   : %s\n", port)
-	}
-
-	template := app.Properties.Template
-	if template != nil {
-		cont := template.Containers
-		if cont == nil || len(cont) == 0 {
-			fmt.Printf("\n")
-			fmt.Printf("Container: none\n")
-		} else {
-			for i, c := range cont {
-				fmt.Printf("\n")
-				if len(cont) > 1 {
-					fmt.Printf("Container(%d):\n", i+1)
-				} else {
-					fmt.Printf("Container:\n")
-				}
-				fmt.Printf("  Image: %s\n", NoNil(c.Image))
-			}
-		}
-
-		// scale := template.Scale
-
-		binds := template.ServiceBinds
-		if len(binds) > 0 {
-			fmt.Printf("\n")
-			fmt.Printf("Bindings:\n")
-			for _, bind := range binds {
-				fmt.Printf("  - Service: %s\n", NoNil(bind.ServiceId))
-			}
-		}
-	}
-	fmt.Printf("\n")
-}
-
-func NoNil(str *string) string {
-	if str == nil {
-		return ""
-	}
-	return *str
 }
 
 func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {

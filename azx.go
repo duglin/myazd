@@ -53,6 +53,7 @@ type ARMResource interface {
 	DependsOn() []*ResourceReference
 	ToARMJson() string // json
 	HideServerFields(ARMResource)
+	ToForm() *Form
 }
 
 func NoErr(err error, args ...interface{}) {
@@ -203,9 +204,7 @@ func setupRootCmds() *cobra.Command {
 	ShowCmd = &cobra.Command{
 		Use:   "show",
 		Short: "Show details about a resource",
-		// Run:   ShowFunc,
 	}
-	// ShowCmd.Flags().StringP("output", "o", "pretty", "Format (pretty,json,arm)")
 	RootCmd.AddCommand(ShowCmd)
 
 	AddCmd = &cobra.Command{
@@ -1459,6 +1458,59 @@ func doHTTP(verb string, URL string, data []byte) *HTTPResponse {
 	}
 
 	return httpResponse
+}
+
+func ShowFunc(cmd *cobra.Command, args []string) {
+	log.VPrintf(2, ">Enter: ShowFunc (%q)", args)
+	defer log.VPrintf(2, "<Exit: ShowFunc")
+
+	stage := GetConfigProperty("currentStage")
+	name, _ := cmd.Flags().GetString("name")
+
+	var data []byte
+	var err error
+	from, _ := cmd.Flags().GetString("from")
+
+	fileName := fmt.Sprintf("%s-%s.json", cmd.CalledAs(), name)
+	data, err = ReadStageFile(stage, fileName)
+	NoErr(err, "Error reading resource file \"%s/%s\": %s", cmd.CalledAs(),
+		name, err)
+	res, err := ResourceFromBytes(stage, name, data)
+	NoErr(err)
+
+	if from == "iac" || from == "rest" {
+		if from == "rest" {
+			data = []byte(res.Object.ToARMJson())
+		}
+	} else if from == "azure" {
+		data, err = res.Download()
+		NoErr(err, "Error downloading: %s", err)
+		if len(data) == 0 {
+			ErrStop("Resource doesn't existin in Azure - "+
+				"try '%s up' to create it", APP)
+		}
+	} else {
+		ErrStop("Unknown --from value: %s", from)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+
+	if output == "json" {
+		tmp := map[string]json.RawMessage{}
+		json.Unmarshal(data, &tmp)
+		str, _ := json.MarshalIndent(tmp, "", "  ")
+		fmt.Printf("%s\n", string(str))
+		return
+	}
+
+	if output != "pretty" {
+		ErrStop("Invalid --output value: %s", output)
+	}
+
+	// Must be "pretty"
+	res, err = ResourceFromBytes(stage, name, data)
+	form := res.Object.ToForm()
+	form.Print()
 }
 
 func main() {

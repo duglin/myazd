@@ -94,6 +94,11 @@ func (r *Redis) DependsOn() []*ResourceReference {
 	return refs
 }
 
+func (r *Redis) ToForm() *Form {
+	ErrStop("Not implemented yet")
+	return NewForm()
+}
+
 func (r *Redis) ToARMJson() string {
 	saveID := r.ID
 	r.ID = ""
