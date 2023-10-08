@@ -8,6 +8,7 @@ package main
 */
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"path"
 	// "reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -42,7 +44,7 @@ var ShowCmd *cobra.Command
 var AddCmd *cobra.Command
 var UpdateCmd *cobra.Command
 
-var Config = map[string]string{}
+var config = (map[string]string)(nil)
 
 type ARMParser func([]byte) *ResourceBase // FromARMJson
 var RegisteredParsers = []ARMParser{}     // FromARMJson
@@ -124,18 +126,35 @@ func setupRootCmds() *cobra.Command {
 	}
 	RootCmd.AddCommand(httpCmd)
 
+	configCmd := &cobra.Command{
+		Use:   "config",
+		Short: "Manage configuration/default values",
+	}
+	RootCmd.AddCommand(configCmd)
+
 	setCmd := &cobra.Command{
 		Use:   "set",
 		Short: "Set configuration/default values",
 		Run:   SetFunc,
 	}
-	RootCmd.AddCommand(setCmd)
+	setCmd.Flags().BoolP("global", "g", false, "Set property globally")
+	configCmd.AddCommand(setCmd)
+
+	configListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List configuration/default values",
+		Run:   ConfigListFunc,
+	}
+	configCmd.AddCommand(configListCmd)
 
 	initCmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a new project",
 		Run:   InitFunc,
 	}
+	initCmd.Flags().StringP("subscription", "s", "", "Subscription ID")
+	initCmd.Flags().StringP("resource-groupd", "g", "", "Resource Group")
+	initCmd.Flags().StringP("location", "l", "", "Location")
 	RootCmd.AddCommand(initCmd)
 
 	upCmd := &cobra.Command{
@@ -581,7 +600,7 @@ func GenerateConfigFileName(stage string, name string) string {
 
 func GetStageResources(stage string) map[string]*ResourceBase { // id->*RB
 	if stage == "" {
-		stage = Config["currentStage"]
+		stage = GetConfigProperty("currentStage")
 		if stage == "" {
 			ErrStop("No current stage defined")
 		}
@@ -646,46 +665,94 @@ func CreateConfigDir() fs.FileInfo {
 	err = os.Mkdir(path.Join(fi.Name(), "stage_default"), 0755)
 	NoErr(err)
 
-	Config["currentStage"] = "default"
-	Config["defaults.Subscription"] = "fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a"
-	Config["defaults.ResourceGroup"] = "default"
-	Config["defaults.Location"] = "East US"
+	SetConfigProperty("currentStage", "default", false)
 
-	SaveConfig()
 	return fi
 }
 
-func LoadConfig() {
-	log.VPrintf(2, ">Enter: LoadConfig")
-	defer log.VPrintf(2, "<Exit: LoadConfig")
+// Use name="" to just create an empty file
+func SetConfigProperty(name string, value string, global bool) {
+	fileName := ""
 
-	fi := GetConfigDir()
-	if fi == nil {
-		ErrStop("Directory isn't initialized, try: %s init", APP)
+	if global {
+		home, _ := os.UserHomeDir()
+		fileName = path.Join(home, "."+APP+"config")
+	} else {
+		fi := GetConfigDir()
+		if fi == nil {
+			ErrStop("Directory isn't initialized, try: %s init", APP)
+		}
+
+		fileName = path.Join(fi.Name(), "config")
 	}
 
-	fileName := path.Join(fi.Name(), APP+".config")
+	config := map[string]string{}
+
 	data, err := os.ReadFile(fileName)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		NoErr(err)
 	}
 
 	if len(data) != 0 {
-		err = json.Unmarshal(data, &Config)
-		NoErr(err, "Error loading config file: %s", err)
+		err = json.Unmarshal(data, &config)
+		NoErr(err, "Error loading config file %q: %s", fileName, err)
 	}
-}
 
-func SaveConfig() {
-	log.VPrintf(2, ">Enter: SaveConfig")
-	defer log.VPrintf(2, "<Exit: SaveConfig")
+	if name != "" {
+		if value != "" {
+			config[name] = value
+		} else {
+			delete(config, name)
+		}
+		data, err = json.MarshalIndent(config, "", "  ")
+		NoErr(err)
+	}
+	data = append(data, byte('\n'))
 
-	fi := GetConfigDir()
-	fileName := path.Join(fi.Name(), APP+".config")
-	data, err := json.MarshalIndent(Config, "", "  ")
-	NoErr(err)
 	err = os.WriteFile(fileName, data, 0644)
 	NoErr(err)
+}
+
+func GetConfigProperty(name string) string {
+	if config == nil {
+		LoadConfig()
+	}
+	return config[name]
+}
+
+func LoadConfig() {
+	log.VPrintf(2, ">Enter: LoadConfig")
+	defer log.VPrintf(2, "<Exit: LoadConfig")
+
+	// Load global config first
+	home, _ := os.UserHomeDir()
+	fileName := path.Join(home, "."+APP+"config")
+	data, err := os.ReadFile(fileName)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		NoErr(err)
+	}
+
+	if len(data) != 0 {
+		err = json.Unmarshal(data, &config)
+		NoErr(err, "Error loading config file %q: %s", fileName, err)
+	}
+
+	// Now overlay with local config
+	fi := GetConfigDir()
+	if fi == nil {
+		ErrStop("Directory isn't initialized, try: %s init", APP)
+	}
+
+	fileName = path.Join(fi.Name(), "config")
+	data, err = os.ReadFile(fileName)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		NoErr(err)
+	}
+
+	if len(data) != 0 {
+		err = json.Unmarshal(data, &config)
+		NoErr(err, "Error loading config file: %s", err)
+	}
 }
 
 func httpFunc(cmd *cobra.Command, args []string) {
@@ -711,19 +778,26 @@ func httpFunc(cmd *cobra.Command, args []string) {
 
 func SetFunc(cmd *cobra.Command, args []string) {
 	LoadConfig()
-	changed := false
+
+	global, _ := cmd.Flags().GetBool("global")
 
 	for _, arg := range args {
-		before, after, found := strings.Cut(arg, "=")
-		changed = true
-		if !found {
-			delete(Config, before)
-		} else {
-			Config[before] = after
-		}
+		before, after, _ := strings.Cut(arg, "=")
+		SetConfigProperty(before, after, global)
 	}
-	if changed {
-		SaveConfig()
+}
+
+func ConfigListFunc(cmd *cobra.Command, args []string) {
+	LoadConfig()
+
+	names := []string{}
+	for k, _ := range config {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		fmt.Printf("%s=%s\n", name, GetConfigProperty(name))
 	}
 }
 
@@ -735,6 +809,49 @@ func InitFunc(cmd *cobra.Command, args []string) {
 	}
 
 	CreateConfigDir()
+
+	sub, _ := cmd.Flags().GetString("subscription")
+	rg, _ := cmd.Flags().GetString("resource-group")
+	loc, _ := cmd.Flags().GetString("location")
+
+	promptProps := []struct {
+		PropName string
+		NiceName string
+		Flag     string
+	}{
+		{
+			PropName: "defaults.Subscription",
+			NiceName: "Subscription ID",
+			Flag:     sub,
+		},
+		{
+			PropName: "defaults.ResourceGroup",
+			NiceName: "Resource Group",
+			Flag:     rg,
+		},
+		{
+			PropName: "defaults.Location",
+			NiceName: "Location",
+			Flag:     loc,
+		},
+	}
+	for _, pp := range promptProps {
+		if pp.Flag != "" {
+			SetConfigProperty(pp.PropName, pp.Flag, false)
+		} else {
+			reader := bufio.NewReader(os.Stdin)
+			if GetConfigProperty(pp.PropName) == "" {
+				sub := ""
+				for sub == "" {
+					fmt.Printf("Provide your default %q: ", pp.NiceName)
+					// fmt.Scanf("%s", &sub)
+					sub, _ = reader.ReadString('\n')
+					sub = strings.TrimSpace(sub)
+				}
+				SetConfigProperty(pp.PropName, sub, false)
+			}
+		}
+	}
 }
 
 // Everything at one level can be deployed at the same time.
@@ -833,13 +950,11 @@ func ProvisionFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: ProvisionFunc: %q", args)
 	defer log.VPrintf(2, "<Exit: ProvisionFunc")
 
-	LoadConfig()
-
 	resources := map[string]*ResourceBase{}
 	doDep, _ := cmd.Flags().GetBool("dep")
 
 	if len(args) > 0 {
-		stage := Config["currentStage"]
+		stage := GetConfigProperty("currentStage")
 		if stage == "" {
 			ErrStop("No current stage defined")
 		}
@@ -874,13 +989,11 @@ func DeprovisionFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: DeprovisionFunc: %q", args)
 	defer log.VPrintf(2, "<Exit: DeprovisionFunc")
 
-	LoadConfig()
-
 	resources := map[string]*ResourceBase{}
 	wait, _ := cmd.Flags().GetBool("wait")
 
 	if len(args) > 0 {
-		stage := Config["currentStage"]
+		stage := GetConfigProperty("currentStage")
 		if stage == "" {
 			ErrStop("No current stage defined")
 		}
@@ -919,9 +1032,7 @@ func DiffFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: DiffFunc: %q", args)
 	defer log.VPrintf(2, "<Exit: DiffFunc")
 
-	LoadConfig()
-
-	stage := Config["currentStage"]
+	stage := GetConfigProperty("currentStage")
 	if stage == "" {
 		ErrStop("No current stage defined")
 	}
@@ -952,7 +1063,6 @@ func DiffFunc(cmd *cobra.Command, args []string) {
 }
 
 func StageListFunc(cmd *cobra.Command, args []string) {
-	LoadConfig()
 	for _, stage := range GetStages() {
 		_, file := path.Split(stage)
 		if !strings.HasPrefix(file, "stage_") {
@@ -961,7 +1071,7 @@ func StageListFunc(cmd *cobra.Command, args []string) {
 		stage = file[len("stage_"):]
 
 		isCurrent := ""
-		if stage == Config["currentStage"] {
+		if stage == GetConfigProperty("currentStage") {
 			isCurrent = "*"
 		}
 
@@ -970,8 +1080,6 @@ func StageListFunc(cmd *cobra.Command, args []string) {
 }
 
 func ListFunc(cmd *cobra.Command, args []string) {
-	LoadConfig()
-
 	resources := GetStageResources("")
 
 	output, _ := cmd.Flags().GetString("output")
@@ -996,7 +1104,6 @@ func ListFunc(cmd *cobra.Command, args []string) {
 }
 
 func ResourceAddFunc(cmd *cobra.Command, args []string) {
-	LoadConfig()
 }
 
 type ResourceBase struct {

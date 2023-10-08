@@ -14,6 +14,13 @@ func ToJson(obj interface{}) string {
 
 func StringPtr(str string) *string { return &str }
 
+func NotNil(pStr *string) string {
+	if pStr == nil {
+		return ""
+	}
+	return *pStr
+}
+
 func ShrinkJson(daJson []byte) []byte {
 	tmp := json.RawMessage{}
 

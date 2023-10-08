@@ -4,8 +4,16 @@ export RETRYONFAIL=1
 export PATH=$PATH:$PWD
 . .demoscript
 
-clear
 set -e
+
+comment --nolf "Best if you:"
+comment --nolf '  `azx config set defaults.Location=...`'
+comment --nolf '  `azx config set defaults.ResourceGroup=...`'
+comment --nolf '  `azx config set defaults.Subscription=...`'
+comment "before running the demo"
+comment "Demo assumes you have an ACA env already created"
+
+doit --noscroll clear
 
 comment "Create and cd into a new dir to show we're starting with nothing"
 rm -rf testDir
@@ -15,15 +23,12 @@ cd testDir
 doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 
 comment 'Init azx'
-doit azx init
-comment --nolf "normally we'd ask for the subscription and resourceGroup"
-comment "but it's defaulted now"
+doit --noscroll azx init
 # doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
 # comment "Notice it created a hidden .azx dir to hold our IaC files"
 
-comment --nolf 'Create an ACA app with minimal info to make it available'
-comment 'on the web'
-doit azx add aca-app -n myapp -i duglin/aca-lister --environment=demo --ingress external
+comment 'Create an ACA app with minimal info to make it available on the web'
+doit azx add aca-app -n myapp -i duglin/aca-lister --environment=demo --external
 comment "This is only known locally, we haven't provisioned anything to Azure yet"
 
 comment List the resources in the project
@@ -35,7 +40,7 @@ doit azx show aca-app -n myapp
 comment "Now, look under the covers at its IaC file."
 doit azx show aca-app -n myapp -o raw
 comment --nolf "Notice there's nothing in there that the user didn't provide."
-comment --nolf "So while the exact syntax might be ne , it should be an easy"
+comment --nolf "So while the exact syntax might be new, it should be an easy"
 comment "mapping from what they specific on the CLI"
 
 # comment --nolf "For geeks, show what the REST API will send. Notice some ACA"
@@ -54,7 +59,7 @@ comment "now lets create a redis service and provison at the same time"
 doit azx add aca-redis -n myredis --environment=demo --provision
 
 comment "turn on auto-provision because I'm getting lazy"
-doit azx set defaults.provision=true
+doit azx config set defaults.provision=true
 
 comment "Update the app to connect to Redis and show app forms of the"
 doit azx update aca-app -n myapp --bind myredis
@@ -99,6 +104,8 @@ doit azx show aca-app -n myapp -o azure
 
 comment "Unbind just for completeness"
 doit azx update aca-app -n myapp --unbind myredis
+comment "And the Binding section is now gone"
+doit azx show aca-app -n myapp
 comment --pause see the app in the portal again - show it is disconnected from redis
 
 comment --nolf 'Now update the app via the "az" CLI (or portal) to see how we'

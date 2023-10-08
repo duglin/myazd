@@ -111,24 +111,22 @@ func RedisFromARMJson(data []byte) *ResourceBase {
 }
 
 func AddRedisFunc(cmd *cobra.Command, args []string) {
-	LoadConfig()
-
 	redis := &Redis{}
 	redis.Object = redis
 
 	// ResourceBase stuff
-	redis.Subscription = Config["defaults.Subscription"]
-	redis.ResourceGroup = Config["defaults.ResourceGroup"]
+	redis.Subscription = GetConfigProperty("defaults.Subscription")
+	redis.ResourceGroup = GetConfigProperty("defaults.ResourceGroup")
 	redis.Type = "Microsoft.Cache/redis"
 	redis.Name, _ = cmd.Flags().GetString("name")
 	redis.APIVersion = GetResourceDef(redis.Type).Defaults["APIVERSION"]
 	redis.NiceType = "redis"
 
-	redis.Stage = Config["currentStage"]
+	redis.Stage = GetConfigProperty("currentStage")
 	redis.Filename = fmt.Sprintf("%s-%s.json", redis.NiceType, redis.Name)
 
 	// Redis specific stuff
-	redis.Location = StringPtr(Config["defaults.Location"])
+	redis.Location = StringPtr(GetConfigProperty("defaults.Location"))
 
 	redis.ProcessFlags(cmd)
 	redis.Save()

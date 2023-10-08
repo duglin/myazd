@@ -17,27 +17,29 @@ func initAca() {
 }
 
 func setupAcaCmds() {
-	cmd := &cobra.Command{
-		Use:   "aca-env",
-		Short: "Add an Azure Container App Environment",
-		Run:   ResourceAddFunc,
-	}
-	cmd.Flags().StringP("name", "n", "", "Name of environment")
-	cmd.MarkFlagRequired("name")
-	AddCmd.AddCommand(cmd)
+	/*
+		cmd := &cobra.Command{
+			Use:   "aca-env",
+			Short: "Add an Azure Container App Environment",
+			Run:   ResourceAddFunc,
+		}
+		cmd.Flags().StringP("name", "n", "", "Name of environment")
+		cmd.MarkFlagRequired("name")
+		AddCmd.AddCommand(cmd)
 
-	cmd = &cobra.Command{
-		Use:   "aca-env",
-		Short: "Update an Azure Container App Environment",
-		// Run:   ResourceUpdateFunc,
-	}
-	cmd.Flags().StringP("name", "n", "", "Name of environment")
-	cmd.MarkFlagRequired("name")
-	UpdateCmd.AddCommand(cmd)
+		cmd = &cobra.Command{
+			Use:   "aca-env",
+			Short: "Update an Azure Container App Environment",
+			// Run:   ResourceUpdateFunc,
+		}
+		cmd.Flags().StringP("name", "n", "", "Name of environment")
+		cmd.MarkFlagRequired("name")
+		UpdateCmd.AddCommand(cmd)
+	*/
 
 	// ---
 
-	cmd = &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "aca-app",
 		Short: "Add an Azure Container App Application",
 		Run:   AddAcaAppFunc,
@@ -45,12 +47,18 @@ func setupAcaCmds() {
 	cmd.Flags().StringP("name", "n", "", "Name of app")
 	cmd.Flags().StringP("image", "i", "", "Name of container image")
 	cmd.Flags().String("environment", "", "Name of ACA environment")
+	cmd.Flags().StringP("subscription", "s", "", "Subscription ID")
+	cmd.Flags().StringP("resource-group", "g", "", "Resource Group")
+	cmd.Flags().StringP("location", "l", "", "Location")
 	cmd.Flags().StringArrayP("env", "e", nil, "Name/value of env var")
 	cmd.Flags().String("ingress", "", "'internal', or 'external'")
+	cmd.Flags().Bool("external", false, "Enable public access")
+	cmd.Flags().Bool("internal", true, "Disable public access")
 	cmd.Flags().String("port", "", "listen port #")
 	cmd.Flags().StringArray("bind", nil, "Services to connect to")
 	cmd.Flags().StringArray("unbind", nil, "Bindings/services to disconnect")
 	cmd.Flags().Bool("provision", false, "Provision after update")
+	cmd.MarkFlagsMutuallyExclusive("internal", "external", "ingress")
 	cmd.MarkFlagRequired("name")
 	AddCmd.AddCommand(cmd)
 
@@ -62,12 +70,18 @@ func setupAcaCmds() {
 	cmd.Flags().StringP("name", "n", "", "Name of app")
 	cmd.Flags().StringP("image", "i", "", "Name of container image")
 	cmd.Flags().String("environment", "", "Name of ACA environment")
+	cmd.Flags().StringP("subscription", "s", "", "Subscription ID")
+	cmd.Flags().StringP("resource-group", "g", "", "Resource Group")
+	cmd.Flags().StringP("location", "l", "", "Location")
 	cmd.Flags().StringArrayP("env", "e", nil, "Name/value of env var")
 	cmd.Flags().String("ingress", "", "'internal', or 'external'")
+	cmd.Flags().Bool("external", false, "Enable public access")
+	cmd.Flags().Bool("internal", true, "Disable public access")
 	cmd.Flags().String("port", "", "listen port #")
 	cmd.Flags().StringArray("bind", nil, "Services to connect to")
 	cmd.Flags().StringArray("unbind", nil, "Bindings/services to disconnect")
 	cmd.Flags().Bool("provision", false, "Provision after update")
+	cmd.MarkFlagsMutuallyExclusive("internal", "external", "ingress")
 	cmd.MarkFlagRequired("name")
 	UpdateCmd.AddCommand(cmd)
 
@@ -90,6 +104,9 @@ func setupAcaCmds() {
 	}
 	cmd.Flags().StringP("name", "n", "", "Name of service")
 	cmd.Flags().String("environment", "", "Name of ACA environment")
+	cmd.Flags().StringP("subscription", "s", "", "Subscription ID")
+	cmd.Flags().StringP("resource-group", "g", "", "Resource Group")
+	cmd.Flags().StringP("location", "l", "", "Location")
 	cmd.Flags().Bool("provision", false, "Provision after update")
 	cmd.MarkFlagRequired("name")
 	AddCmd.AddCommand(cmd)
@@ -203,7 +220,7 @@ func (aa *AcaApp) MarshalJSON() ([]byte, error) {
 	tmpAa := *aa
 	if WhyMarshal == "ARM" {
 		if tmpAa.Location == nil {
-			tmpAa.Location = StringPtr(Config["defaults.Location"])
+			tmpAa.Location = StringPtr(GetConfigProperty("defaults.Location"))
 		}
 		if tmpAa.Location == nil || *(tmpAa.Location) == "" {
 			ErrStop(`Missing "location" for "%s/%s"`, aa.NiceType, aa.Name)
@@ -257,7 +274,7 @@ func (aac *AcaAppContainer) MarshalJSON() ([]byte, error) {
 func (aai *AcaAppIngress) MarshalJSON() ([]byte, error) {
 	tmpAai := *aai
 	if WhyMarshal == "ARM" {
-		if tmpAai.External != nil && *(tmpAai.External) == true &&
+		if tmpAai.External != nil && tmpAai.External != nil &&
 			tmpAai.TargetPort == nil {
 			port := 8080
 			tmpAai.TargetPort = &port
@@ -291,8 +308,8 @@ func (asb *AcaAppServiceBind) ResolveServiceId() *ResourceReference {
 
 	// Set defaults
 	resRef := &ResourceReference{
-		Subscription:  Config["defaults.Subscription"],
-		ResourceGroup: Config["defaults.ResourceGroup"],
+		Subscription:  GetConfigProperty("defaults.Subscription"),
+		ResourceGroup: GetConfigProperty("defaults.ResourceGroup"),
 		Type:          "Microsoft.App/containerapps", // Can't assume
 		APIVersion:    GetResourceDef("Microsoft.App/containerapps").Defaults["APIVERSION"],
 		Origin:        *(asb.ServiceId),
@@ -331,8 +348,8 @@ func (aap *AcaAppProperties) ResolveEnvironmentId() *ResourceReference {
 
 	// Set defaults
 	resRef := &ResourceReference{
-		Subscription:  Config["defaults.Subscription"],
-		ResourceGroup: Config["defaults.ResourceGroup"],
+		Subscription:  GetConfigProperty("defaults.Subscription"),
+		ResourceGroup: GetConfigProperty("defaults.ResourceGroup"),
 		Type:          "Microsoft.App/managedEnvironments",
 		APIVersion:    GetResourceDef("Microsoft.App/managedEnvironments").Defaults["APIVERSION"],
 		Origin:        *(aap.EnvironmentId),
@@ -432,8 +449,6 @@ func AcaFromARMJson(data []byte) *ResourceBase {
 }
 
 func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
-	LoadConfig()
-
 	_, service, _ := strings.Cut(cmd.CalledAs(), "-")
 	if service == "" {
 		ErrStop("Unknown resource type: %s", cmd.CalledAs())
@@ -446,23 +461,25 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 	app.Object = app
 
 	// ResourceBase stuff
-	app.Subscription = Config["defaults.Subscription"]
-	app.ResourceGroup = Config["defaults.ResourceGroup"]
+	app.Subscription = GetConfigProperty("defaults.Subscription")
+	app.ResourceGroup = GetConfigProperty("defaults.ResourceGroup")
 	app.Type = "Microsoft.App/containerApps"
 	app.Name, _ = cmd.Flags().GetString("name")
 	app.APIVersion = GetResourceDef(app.Type).Defaults["APIVERSION"]
 	app.NiceType = cmd.CalledAs()
 
-	app.Stage = Config["currentStage"]
+	app.Stage = GetConfigProperty("currentStage")
 	app.Filename = fmt.Sprintf("%s-%s.json", app.NiceType, app.Name)
 
-	// App specific stuff
-	// app.Location = StringPtr(Config["defaults.Location"])
+	if cmd.Flags().Changed("environment") && GetConfigProperty("aca-env") == "" {
+		env, _ := cmd.Flags().GetString("environment")
+		SetConfigProperty("defaults.aca-env", env, false)
+	}
 
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
 	if !set && app.Properties == nil || app.Properties.EnvironmentId == nil {
-		env := Config["defaults.aca-env"]
+		env := GetConfigProperty("defaults.aca-env")
 		if env == "" {
 			ErrStop("Missing the aca-env value. "+
 				"Use either '--environment=???' "+
@@ -471,13 +488,39 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 		SetJson(app, `{"properties":{"environmentId":%q}}`, env)
 	}
 
+	if cmd.Flags().Changed("subscription") {
+		sub, _ := cmd.Flags().GetString("subscription")
+		if sub == "" {
+			sub = GetConfigProperty("defaults.Subscription")
+		}
+		app.Subscription = sub
+		app.ID = app.AsID()
+	}
+
+	if cmd.Flags().Changed("resource-group") {
+		rg, _ := cmd.Flags().GetString("resource-group")
+		if rg == "" {
+			rg = GetConfigProperty("defaults.ResourceGroup")
+		}
+		app.ResourceGroup = rg
+		app.ID = app.AsID()
+	}
+
+	if cmd.Flags().Changed("location") {
+		loc, _ := cmd.Flags().GetString("location")
+		if loc == "" {
+			loc = GetConfigProperty("defaults.Location")
+		}
+		app.Location = &loc
+	}
+
 	// Now set the app to be a dev mode service
 	SetJson(app, `{"properties":{"configuration":{"service":{"type":%q}}}}`,
 		service)
 
 	app.Save()
 	p, _ := cmd.Flags().GetBool("provision")
-	if p || Config["defaults.provision"] == "true" {
+	if p || GetConfigProperty("defaults.provision") == "true" {
 		app.Provision()
 	}
 }
@@ -486,9 +529,7 @@ func ShowAcaServiceFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: ShowAcaServiceFunc (%q)", args)
 	defer log.VPrintf(2, "<Exit: ShowAcaServiceFunc")
 
-	LoadConfig()
-
-	stage := Config["currentStage"]
+	stage := GetConfigProperty("currentStage")
 	name, _ := cmd.Flags().GetString("name")
 	name = fmt.Sprintf("%s-%s.json", cmd.CalledAs(), name)
 	res, err := ResourceFromFile(stage, name)
@@ -531,37 +572,36 @@ func ShowAcaServiceFunc(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("Name: %s\n", app.Name)
-	fmt.Printf("Service: %s\n", *(app.Properties.Configuration.Service.Type))
+	fmt.Printf("Service: %s\n", NotNil(app.Properties.Configuration.Service.Type))
 }
 
 func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: AddAcaAppFunc (%q)", args)
 	defer log.VPrintf(2, "<Exit: AddAcaAppFunc")
 
-	LoadConfig()
-
 	app := &AcaApp{}
 	app.Object = app
 
 	// ResourceBase stuff
-	app.Subscription = Config["defaults.Subscription"]
-	app.ResourceGroup = Config["defaults.ResourceGroup"]
+	app.Subscription = GetConfigProperty("defaults.Subscription")
+	app.ResourceGroup = GetConfigProperty("defaults.ResourceGroup")
+	app.Location = StringPtr(GetConfigProperty("defaults.Location"))
 	app.Type = "Microsoft.App/containerApps"
 	app.Name, _ = cmd.Flags().GetString("name")
 	app.APIVersion = GetResourceDef(app.Type).Defaults["APIVERSION"]
 	app.NiceType = "aca-app"
 
-	app.Stage = Config["currentStage"]
+	app.Stage = GetConfigProperty("currentStage")
 	app.Filename = fmt.Sprintf("%s-%s.json", app.NiceType, app.Name)
 
 	// App specific stuff
-	// app.Location = StringPtr(Config["defaults.Location"])
+	// app.Location = StringPtr(GetConfigProperty("defaults.Location"))
 
 	app.ProcessFlags(cmd)
 	app.Save()
 
 	p, _ := cmd.Flags().GetBool("provision")
-	if p || Config["defaults.provision"] == "true" {
+	if p || GetConfigProperty("defaults.provision") == "true" {
 		app.Provision()
 	}
 }
@@ -570,9 +610,7 @@ func UpdateAcaAppFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: UpdateAcaAppFunc (%q)", args)
 	defer log.VPrintf(2, "<Exit: UpdateAcaAppFunc")
 
-	LoadConfig()
-
-	stage := Config["currentStage"]
+	stage := GetConfigProperty("currentStage")
 	name, _ := cmd.Flags().GetString("name")
 	name = fmt.Sprintf("%s-%s.json", "aca-app", name)
 	res, err := ResourceFromFile(stage, name)
@@ -584,7 +622,7 @@ func UpdateAcaAppFunc(cmd *cobra.Command, args []string) {
 	app.Save()
 
 	p, _ := cmd.Flags().GetBool("provision")
-	if p || Config["defaults.provision"] == "true" {
+	if p || GetConfigProperty("defaults.provision") == "true" {
 		app.Provision()
 	}
 }
@@ -593,9 +631,7 @@ func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: ShowAcaAppFunc (%q)", args)
 	defer log.VPrintf(2, "<Exit: ShowAcaAppFunc")
 
-	LoadConfig()
-
-	stage := Config["currentStage"]
+	stage := GetConfigProperty("currentStage")
 	name, _ := cmd.Flags().GetString("name")
 	name = fmt.Sprintf("%s-%s.json", "aca-app", name)
 	res, err := ResourceFromFile(stage, name)
@@ -639,9 +675,7 @@ func ShowAcaAppFunc(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Name         : %s\n", app.Name)
 	fmt.Printf("Environment  : %s\n", NoNil(app.Properties.EnvironmentId))
-	if app.Location != nil {
-		fmt.Printf("Location     : %s\n", *(app.Location))
-	}
+	fmt.Printf("Location     : %s\n", NotNil(app.Location))
 	// fmt.Printf("\n")
 	fmt.Printf("Subscription : %s\n", app.Subscription)
 	fmt.Printf("ResourceGroup: %s\n", app.ResourceGroup)
@@ -713,16 +747,47 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 		`{"properties":{"template":{"containers":[{"image":%s}]}}}`)
 
 	// TODO make sure 'environ' exists
+	if cmd.Flags().Changed("environment") && GetConfigProperty("aca-env") == "" {
+		env, _ := cmd.Flags().GetString("environment")
+		SetConfigProperty("defaults.aca-env", env, false)
+	}
+
 	set := SetStringProp(app, cmd.Flags(), "environment",
 		`{"properties":{"environmentId":%s}}`)
 	if !set && app.Properties != nil && app.Properties.EnvironmentId == nil {
-		env := Config["defaults.aca-env"]
+		env := GetConfigProperty("defaults.aca-env")
 		if env == "" {
 			ErrStop("Missing the aca-env value. "+
 				"Use either '--environment=???' "+
 				"or '%s set defaults.aca-env=???'", APP)
 		}
 		SetJson(app, `{"properties":{"environmentId":%q}}`, env)
+	}
+
+	if cmd.Flags().Changed("subscription") {
+		sub, _ := cmd.Flags().GetString("subscription")
+		if sub == "" {
+			sub = GetConfigProperty("defaults.Subscription")
+		}
+		app.Subscription = sub
+		app.ID = app.AsID()
+	}
+
+	if cmd.Flags().Changed("resource-group") {
+		rg, _ := cmd.Flags().GetString("resource-group")
+		if rg == "" {
+			rg = GetConfigProperty("defaults.ResourceGroup")
+		}
+		app.ResourceGroup = rg
+		app.ID = app.AsID()
+	}
+
+	if cmd.Flags().Changed("location") {
+		loc, _ := cmd.Flags().GetString("location")
+		if loc == "" {
+			loc = GetConfigProperty("defaults.Location")
+		}
+		app.Location = &loc
 	}
 
 	envs, _ := cmd.Flags().GetStringArray("env")
@@ -768,6 +833,15 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 		val := (tmp == "external")
 		SetJson(app,
 			`{"properties":{"configuration":{"ingress":{"external":%v}}}}`, val)
+	}
+
+	if cmd.Flags().Changed("internal") {
+		SetJson(app,
+			`{"properties":{"configuration":{"ingress":{"external":false}}}}`)
+	}
+	if cmd.Flags().Changed("external") {
+		SetJson(app,
+			`{"properties":{"configuration":{"ingress":{"external":true}}}}`)
 	}
 
 	if cmd.Flags().Changed("port") {
