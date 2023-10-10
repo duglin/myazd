@@ -1,0 +1,40 @@
+#!/bin/bash
+
+export RETRYONFAIL=1
+export PATH=$PATH:$PWD
+. .demoscript
+
+set -e
+
+RG=default
+SUB=fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a
+LOC="'East US'"
+ENV=demo
+
+comment "Demo assumes you have an ACA env ('$ENV') already created"
+comment "MUST have 'az' in your PATH for auth purposes"
+
+rm -rf testDir2
+doit mkdir testDir2
+doit cd testDir2
+cd testDir2
+
+doit --noscroll azx init -g "$RG" -s "$SUB" -l "$LOC"
+doit azx add aca-redis -n redis2 --environment "$ENV"
+doit azx add aca-app -n app2 -i duglin/aca-lister --external --bind redis2
+doit azx list
+doit azx up
+doit ls .azx/stage_default
+doit azx show aca-app -n app2
+doit azx show aca-app -n app2 -o json
+doit azx show aca-redis -n redis2
+doit azx down --wait
+doit azx up
+doit azx update aca-app -n app2 --unbind redis2
+doit azx show aca-app -n app2
+doit azx show aca-app -n app2 -o json
+doit azx up
+doit --noscroll az containerapp update -n app2 --bind redis2
+doit azx diff aca-app/app2
+doit azx sync aca-app/app2 --all
+doit azx down

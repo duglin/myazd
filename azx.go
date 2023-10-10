@@ -134,7 +134,7 @@ func setupRootCmds() *cobra.Command {
 	RootCmd.AddCommand(configCmd)
 
 	setCmd := &cobra.Command{
-		Use:   "set",
+		Use:   "set [flags] name[=value]...",
 		Short: "Set configuration/default values",
 		Run:   SetFunc,
 	}
@@ -159,32 +159,32 @@ func setupRootCmds() *cobra.Command {
 	RootCmd.AddCommand(initCmd)
 
 	upCmd := &cobra.Command{
-		Use:   "up",
-		Short: "Provision all resources",
+		Use:   "up [flags] [type/name]...",
+		Short: "Provision resources (default is all resources)",
 		Run:   ProvisionFunc,
 	}
 	upCmd.Flags().BoolP("dep", "d", false, "Provision all dependencies")
 	RootCmd.AddCommand(upCmd)
 
 	downCmd := &cobra.Command{
-		Use:   "down",
-		Short: "Deprovision all resources",
+		Use:   "down [flags] [type/name]...",
+		Short: "Deprovision resources (default is all resources)",
 		Run:   DeprovisionFunc,
 	}
 	downCmd.Flags().BoolP("wait", "w", false, "Wait for resources to vanish")
 	RootCmd.AddCommand(downCmd)
 
 	diffCmd := &cobra.Command{
-		Use:   "diff",
-		Short: "Diff resource with Azure's version",
+		Use:   "diff [flags] [type/name]...",
+		Short: "Diff resources with Azure's version (default is all resources)",
 		Run:   DiffFunc,
 	}
 	diffCmd.Flags().StringP("output", "o", "pretty", "Format(pretty,json)")
 	RootCmd.AddCommand(diffCmd)
 
 	syncCmd := &cobra.Command{
-		Use:   "sync",
-		Short: "Sync resource with Azure's version",
+		Use:   "sync [flags] [type/name]...",
+		Short: "Sync resources with Azure's version (default is all resources)",
 		Run:   SyncFunc,
 	}
 	syncCmd.Flags().StringP("output", "o", "pretty", "Format(pretty,json)")
@@ -1351,9 +1351,10 @@ func (r *ResourceBase) Diff(sync bool, all bool) { // (string, error) {
 	azureForm := azure.Object.ToForm()
 
 	armForm.Diff(azureForm, &diffContext{
-		title:       fmt.Sprintf("Diff %q: local/azure", r.NiceType+"/"+r.Name),
-		srcName:     fmt.Sprintf("local"),
-		tgtName:     fmt.Sprintf("azure"),
+		title: fmt.Sprintf("Diff %q: < local   > azure",
+			r.NiceType+"/"+r.Name),
+		srcName:     "local",
+		tgtName:     "azure",
 		shownLegend: false,
 		sync:        sync,
 		all:         all,
@@ -1391,7 +1392,7 @@ func (r *ResourceBase) JsonDiff() (string, error) {
 	azureData, err := res.Download()
 	NoErr(err, "Error downloading %q: %s", r.NiceType+"/"+r.Name, err)
 	if len(azureData) == 0 {
-		return "", fmt.Errorf("Not in Azure")
+		return "", fmt.Errorf("%q: Not in Azure", r.NiceType+"/"+r.Name)
 	}
 	azure, err := ResourceFromBytes(res.Stage, res.Name, azureData)
 	if err != nil {

@@ -6,25 +6,142 @@ export PATH=$PATH:$PWD
 
 set -e
 
-comment "Demo assumes you have an ACA env already created"
+RG=default
+SUB=fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a
+LOC="'East US'"
+ENV=demo
 
-rm -rf testDir2
-doit mkdir testDir2
-doit cd testDir2
-cd testDir2
+comment --nolf "Best if you:"
+comment --nolf '  `azx config set defaults.Location=...`'
+comment --nolf '  `azx config set defaults.ResourceGroup=...`'
+comment --nolf '  `azx config set defaults.Subscription=...`'
+comment "before running the demo"
+comment "Demo assumes you have an ACA env ($ENV) already created"
+comment "MUST have 'az' in your PATH for auth purposes"
 
-doit --noscroll azx init -g default -s fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a -l EastUS
-doit azx add aca-redis -n redis2 --environment demo
-doit azx add aca-app -n app2 -i duglin/aca-lister --external --bind redis2
+doit --noscroll clear
+
+comment "Create and cd into a new dir to show we're starting with nothing"
+rm -rf testDir
+doit mkdir testDir
+doit cd testDir
+cd testDir
+doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
+
+comment 'Init azx'
+doit --noscroll azx init
+# doit --showcmd="ls -la" ls -la \| grep -v " out" \| grep -v " cmds"
+# comment "Notice it created a hidden .azx dir to hold our IaC files"
+
+comment 'Create an ACA app with minimal info to make it available on the web'
+doit azx add aca-app -n myapp -i duglin/aca-lister --environment=demo --external
+comment "This is only known locally, we haven't provisioned anything to Azure yet"
+
+comment List the resources in the project
+doit azx list
+
+comment "lets look at the app. " # First human readable format"
+doit azx show aca-app -n myapp
+
+comment "Now, look under the covers at its IaC file."
+doit azx show aca-app -n myapp -o json
+comment --nolf "Notice there's nothing in there that the user didn't provide."
+comment --nolf "So while the exact syntax might be new, it should be an easy"
+comment "mapping from what they specific on the CLI"
+
+# comment --nolf "For geeks, show what the REST API will send. Notice some ACA"
+# comment "required fields and smart defaults are filled in automatically"
+# doit azx show aca-app -n myapp --from rest -o json
+
+# comment --nolf 'Finally, ask to see what this looks like on Azure. This will'
+# comment "fail because we haven't provisioned it yet to Azure"
+# doit --ignorerc azx show aca-app -n myapp --from azure -o json
+
+comment "Now we'll provision everything (the app)"
 doit azx up
-doit ls .azx/stage_default
-doit azx show aca-app -n app2
-doit azx show aca-app -n app2 -o raw
-doit azx show aca-redis -n redis2
+comment --pause check it on the web - show that it uses an in-memory datastore
+
+comment "now lets create a redis service and provison at the same time"
+doit azx add aca-redis -n myredis --environment=demo --up
+
+comment "turn on auto-provision because I'm getting lazy"
+doit azx config set defaults.up=true
+
+comment "Update the app to connect to Redis and show app forms of the"
+doit azx update aca-app -n myapp --bind myredis
+
+comment "app to show the new 'binding' section" # , as well what Azure has"
+doit azx show aca-app -n myapp
+# doit azx show aca-app -n myapp -o json
+# doit azx show aca-app -n myapp --from rest -o json
+# doit azx show aca-app -n myapp --from azure -o json
+
+comment --pause go look at the app in the portal - show that it uses redis now
+
+comment "take it all down, and wait for azure to fully delete them"
 doit azx down --wait
+
+comment "Gone from Azure, but still defined in local IaC files"
+comment "Portal should not show app or service"
+
+# comment see the files
+# doit ls .azx/stage_default
+# doit cat .azx/stage_default/*
+
+comment --nolf "Recreate everything in Azure and see that it works."
+comment "Notice that it'll create redis first because myapp depends on it"
 doit azx up
-doit azx update aca-app -n app2 --unbind redis2
-doit azx show aca-app -n app2
-doit azx show aca-app -n app2 -o raw
-doit azx up
+
+comment "BUT BUT BUT what if I want to see (or edit directly) the IaC files???"
+comment "Can see them on disk if needed"
+doit ls -l .azx/stage_default/
+
+comment "But, let azx show it nicer"
+doit azx show aca-app -n myapp -o json
+comment --nolf "Notice there's no info in there that the user didn't provide"
+comment --nolf "So while the exact syntax might be new to folks, it should be"
+comment "an easy mapping from what they specific on the CLI"
+
+comment "Now look at the IaC with all the defaults filled-in"
+doit azx show aca-app -n myapp -o json
+
+comment "And finally the full resource per Azure's view of it"
+doit azx show aca-app -n myapp --from azure -o json
+
+comment "Unbind just for completeness"
+doit azx update aca-app -n myapp --unbind myredis
+comment "And the Binding section is now gone"
+doit azx show aca-app -n myapp
+comment --pause see the app in the portal again - show it is disconnected from redis
+
+comment --nolf 'Now update the app via the "az" CLI (or portal) to see how we'
+comment --nolf 'can deal with out-of-band changes to the IaC stuff. Think of'
+comment --nolf 'how you deal with someone changing a git repo - you diff and'
+comment 'rebase'
+doit --noscroll az containerapp update -n myapp --max-replicas=9
+
+comment 'Now diff our copy with Azure'
+doit azx diff aca-app/myapp
+
+comment --nolf "Notice that 'maxReplicas" is a defaulted value, not user"
+comment --nolf "provided, it checked all fields."
+comment Rebase is not implemented yet, but you get the idea..."
+
+comment clean up
 doit azx down
+
+rm out cmds
+
+comment --nolf 'The key aspects of this are: '
+comment --nolf "- IaC files include just minimal info, so easy it's to read"
+comment --nolf "  but can easily ask to see the defaults and Azure's state"
+comment --nolf '- while it shows the IaC files as an FYI, viewing or editing'
+comment --nolf '  them  directly should be unnecessary'
+comment --nolf '- provides a nice (az-like) CLI IaC editing UX for devs w/o '
+comment --nolf '  losing the ability to do IaC (declarative) work. All of it '
+comment --nolf '  can be checked-in'
+comment --nolf '- provides a possible path (diff/rebase) for dealing with'
+comment        '  updates to the resources via non-azx UXs'
+
+cd ..
+rm -f cmds out

@@ -57,7 +57,7 @@ func setupAcaCmds() {
 	cmd.Flags().String("port", "", "listen port #")
 	cmd.Flags().StringArray("bind", nil, "Services to connect to")
 	cmd.Flags().StringArray("unbind", nil, "Bindings/services to disconnect")
-	cmd.Flags().Bool("provision", false, "Provision after update")
+	cmd.Flags().Bool("up", false, "Provision after update")
 	cmd.MarkFlagsMutuallyExclusive("internal", "external", "ingress")
 	cmd.MarkFlagRequired("name")
 	AddCmd.AddCommand(cmd)
@@ -80,7 +80,7 @@ func setupAcaCmds() {
 	cmd.Flags().String("port", "", "listen port #")
 	cmd.Flags().StringArray("bind", nil, "Services to connect to")
 	cmd.Flags().StringArray("unbind", nil, "Bindings/services to disconnect")
-	cmd.Flags().Bool("provision", false, "Provision after update")
+	cmd.Flags().Bool("up", false, "Provision after update")
 	cmd.MarkFlagsMutuallyExclusive("internal", "external", "ingress")
 	cmd.MarkFlagRequired("name")
 	UpdateCmd.AddCommand(cmd)
@@ -108,7 +108,7 @@ func setupAcaCmds() {
 	cmd.Flags().StringP("subscription", "s", "", "Subscription ID")
 	cmd.Flags().StringP("resource-group", "g", "", "Resource Group")
 	cmd.Flags().StringP("location", "l", "", "Location")
-	cmd.Flags().Bool("provision", false, "Provision after update")
+	cmd.Flags().Bool("up", false, "Provision after update")
 	cmd.MarkFlagRequired("name")
 	AddCmd.AddCommand(cmd)
 
@@ -638,8 +638,8 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 		service)
 
 	app.Save()
-	p, _ := cmd.Flags().GetBool("provision")
-	if p || GetConfigProperty("defaults.provision") == "true" {
+	p, _ := cmd.Flags().GetBool("up")
+	if p || GetConfigProperty("defaults.up") == "true" {
 		app.Provision()
 	}
 }
@@ -669,8 +669,8 @@ func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	app.ProcessFlags(cmd)
 	app.Save()
 
-	p, _ := cmd.Flags().GetBool("provision")
-	if p || GetConfigProperty("defaults.provision") == "true" {
+	p, _ := cmd.Flags().GetBool("up")
+	if p || GetConfigProperty("defaults.up") == "true" {
 		app.Provision()
 	}
 }
@@ -690,8 +690,8 @@ func UpdateAcaAppFunc(cmd *cobra.Command, args []string) {
 	app.ProcessFlags(cmd)
 	app.Save()
 
-	p, _ := cmd.Flags().GetBool("provision")
-	if p || GetConfigProperty("defaults.provision") == "true" {
+	p, _ := cmd.Flags().GetBool("up")
+	if p || GetConfigProperty("defaults.up") == "true" {
 		app.Provision()
 	}
 }
