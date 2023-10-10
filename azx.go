@@ -176,10 +176,20 @@ func setupRootCmds() *cobra.Command {
 
 	diffCmd := &cobra.Command{
 		Use:   "diff",
-		Short: "Diff resource with azure's version",
+		Short: "Diff resource with Azure's version",
 		Run:   DiffFunc,
 	}
+	diffCmd.Flags().StringP("output", "o", "pretty", "Format(pretty,json)")
 	RootCmd.AddCommand(diffCmd)
+
+	syncCmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Sync resource with Azure's version",
+		Run:   SyncFunc,
+	}
+	syncCmd.Flags().StringP("output", "o", "pretty", "Format(pretty,json)")
+	syncCmd.Flags().BoolP("all", "a", false, "Accept all changes w/o prompts")
+	RootCmd.AddCommand(syncCmd)
 
 	stageCmd := &cobra.Command{
 		Use:   "stage",
@@ -1031,6 +1041,23 @@ func DiffFunc(cmd *cobra.Command, args []string) {
 	log.VPrintf(2, ">Enter: DiffFunc: %q", args)
 	defer log.VPrintf(2, "<Exit: DiffFunc")
 
+	output, _ := cmd.Flags().GetString("output")
+	diffOrSync(output, false, false, args)
+}
+
+func SyncFunc(cmd *cobra.Command, args []string) {
+	log.VPrintf(2, ">Enter: SyncFunc: %q", args)
+	defer log.VPrintf(2, "<Exit: SyncFunc")
+
+	output, _ := cmd.Flags().GetString("output")
+	all, _ := cmd.Flags().GetBool("all")
+	diffOrSync(output, true, all, args)
+}
+
+func diffOrSync(output string, sync bool, all bool, args []string) {
+	log.VPrintf(2, ">Enter: diffOrSync: %q %v %v", output, sync, args)
+	defer log.VPrintf(2, "<Exit: diffOrSync")
+
 	stage := GetConfigProperty("currentStage")
 	if stage == "" {
 		ErrStop("No current stage defined")
@@ -1042,20 +1069,28 @@ func DiffFunc(cmd *cobra.Command, args []string) {
 		res, err := ResourceFromFile(stage, argTmp+".json")
 		NoErr(err, "Error reading %q: %s", arg, err)
 
-		diff, err := res.Diff()
-		NoErr(err)
-		fmt.Printf("%s\n", diff)
+		if output == "pretty" {
+			res.Diff(sync, all)
+		} else {
+			diff, err := res.JsonDiff()
+			NoErr(err)
+			fmt.Printf("%s\n", diff)
+		}
 	} else {
 		resources := GetStageResources("")
 		for _, res := range resources {
-			diff, err := res.Diff()
-			name := res.NiceType + "/" + res.Name
-			if err != nil {
-				fmt.Printf("%s: %s\n", name, err)
-			} else if len(diff) == 0 {
-				// fmt.Printf("%s: same\n", name)
+			if output == "pretty" {
+				res.Diff(sync, all)
 			} else {
-				fmt.Printf("diff %s:\n%s\n", name, diff)
+				diff, err := res.JsonDiff()
+				name := res.NiceType + "/" + res.Name
+				if err != nil {
+					fmt.Printf("%s: %s\n", name, err)
+				} else if len(diff) == 0 {
+					// fmt.Printf("%s: same\n", name)
+				} else {
+					fmt.Printf("diff %s:\n%s\n", name, diff)
+				}
 			}
 		}
 	}
@@ -1281,7 +1316,65 @@ func (r *ResourceBase) Download() ([]byte, error) {
 	return data, err
 }
 
-func (r *ResourceBase) Diff() (string, error) {
+func (r *ResourceBase) Diff(sync bool, all bool) { // (string, error) {
+	log.VPrintf(2, ">Enter: RB:Diff (%s)", r.NiceType+"/"+r.Name)
+	defer log.VPrintf(2, "<Exit: RB:Diff")
+
+	tmp := map[string]json.RawMessage{}
+	json.Unmarshal([]byte(r.Object.ToARMJson()), &tmp)
+	buf, _ := json.Marshal(tmp)
+	res, err := ResourceFromBytes(r.Stage, r.NiceType+"/"+r.Name, buf)
+	if err != nil {
+		NoErr(err)
+		// return "", err
+	}
+	armForm := res.Object.ToForm()
+	// armForm := r.Object.ToForm()
+
+	// Now get the Azure version
+	azureData, err := r.Download()
+	NoErr(err, "Error downloading %q: %s", r.NiceType+"/"+r.Name, err)
+	if len(azureData) == 0 {
+		// return "", fmt.Errorf("Not in Azure")
+		ErrStop("Not in Azure")
+	}
+	azure, err := ResourceFromBytes(r.Stage, r.Name, azureData)
+	if err != nil {
+		NoErr(err)
+		// return "", err
+	}
+
+	if strings.EqualFold(r.ID, azure.ID) {
+		azure.ID = r.ID
+	}
+	azure.Object.HideServerFields(r.Object)
+	azureForm := azure.Object.ToForm()
+
+	armForm.Diff(azureForm, &diffContext{
+		title:       fmt.Sprintf("Diff %q: local/azure", r.NiceType+"/"+r.Name),
+		srcName:     fmt.Sprintf("local"),
+		tgtName:     fmt.Sprintf("azure"),
+		shownLegend: false,
+		sync:        sync,
+		all:         all,
+	})
+
+	// armForm.Dump()
+	if sync {
+		fmt.Printf("\n")
+		fmt.Printf("Sync result:\n============\n%s\n", armForm.ToString())
+		fmt.Printf("** Saving results is not implemented yet...soon\n")
+	}
+
+	/*
+		armJson := []byte(armForm.ToString())
+		azureJson := []byte(azureForm.ToString())
+
+		return string(Diff("local", armJson, "azure", azureJson)), nil
+	*/
+}
+
+func (r *ResourceBase) JsonDiff() (string, error) {
 	log.VPrintf(2, ">Enter: RB:Diff (%s)", r.NiceType+"/"+r.Name)
 	defer log.VPrintf(2, "<Exit: RB:Diff")
 
@@ -1510,7 +1603,8 @@ func ShowFunc(cmd *cobra.Command, args []string) {
 	// Must be "pretty"
 	res, err = ResourceFromBytes(stage, name, data)
 	form := res.Object.ToForm()
-	form.Print()
+	// form.Dump()
+	fmt.Printf("%s", form.ToString())
 }
 
 func main() {

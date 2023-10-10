@@ -420,39 +420,87 @@ func (app *AcaApp) ToForm() *Form {
 	form := NewForm()
 	form.AddProp("Name", app.Name)
 	form.AddProp("Environment", NotNil(app.Properties.EnvironmentId))
-	form.AddProp("Location", NotNil(app.Location))
+	if app.Location != nil {
+		form.AddProp("Location", NotNil(app.Location))
+	}
 	form.AddProp("Subscription", app.Subscription)
 	form.AddProp("ResourceGroup", app.ResourceGroup)
+	if app.Properties.WorkloadProfileName != nil { // to avoid name alignment
+		wpf := form.AddSection("", "")
+		wpf.Space = false
+		wpf.AddProp("Workload Profile Name", *(app.Properties.WorkloadProfileName))
+	}
 
-	form.AddProp("Ingress", ingress).Space = true
+	nf := form.AddSection("Ingress", ingress) // .Space = true
 	if port != "" {
-		form.AddProp("Port", port)
+		nf.AddProp("Port", port)
 	}
 
 	template := app.Properties.Template
 	if template != nil {
-		cont := template.Containers
-		if cont == nil || len(cont) == 0 {
-			form.AddProp("Container", "none").Space = true
-		} else {
-			nf := form.AddArray("Containers")
-			nf.Space = true
-			for _, c := range cont {
-				cf := nf.AddSection("")
-				cf.AddProp("Image", NotNil(c.Image))
+		// cont := template.Containers
+		// if cont == nil || len(cont) == 0 {
+		// form.AddArray("Containers", "none").Space = true
+		// } else {
+		nf := form.AddArray("Containers", "")
+		// nf.Space = true
+		for i, c := range template.Containers {
+			cf := nf.AddSection(fmt.Sprintf("*#%d", i+1), "")
+			cf.AddProp("Image", NotNil(c.Image))
+			if len(c.Command) > 0 {
+				cf.AddProp("Command", QuoteStrings(c.Command))
+			}
+			if len(c.Args) > 0 {
+				cf.AddProp("Args", QuoteStrings(c.Args))
+			}
+			if c.Resources != nil {
+				if c.Resources.CPU != nil {
+					cf.AddProp("CPU", fmt.Sprintf("%v", *(c.Resources.CPU)))
+				}
+				if c.Resources.Memory != nil {
+					cf.AddProp("Memory", fmt.Sprintf("%s", *(c.Resources.Memory)))
+				}
+			}
+
+			if scale := template.Scale; scale != nil {
+				if scale.MinReplicas != nil {
+					cf.AddProp("Min Scale", fmt.Sprintf("%d", *(scale.MinReplicas)))
+				}
+				if scale.MaxReplicas != nil {
+					cf.AddProp("Max Scale", fmt.Sprintf("%d", *(scale.MaxReplicas)))
+				}
+			}
+
+			if len(c.Env) > 0 {
+				ef := cf.AddArray("Environment variables", "")
+				for _, env := range c.Env {
+					// es := ef.AddSection("*"+NotNil(env.Name), "")
+					// es.Space = false
+					ef.AddProp(NotNil(env.Name), NotNil(env.Value))
+				}
 			}
 		}
+		// }
 
-		// scale := template.Scale
+		/*
+			if scale := template.Scale; scale != nil {
+				if scale.MinReplicas != nil || scale.MaxReplicas != nil {
+					nf := form.AddSection("Scaling", "")
+					if scale.MinReplicas
+					nf.AddProp("Min Scale",
+				}
+			}
+		*/
 
 		binds := template.ServiceBinds
 		if len(binds) > 0 {
-			nf := form.AddArray("Bindings")
-			nf.Space = true
+			nf := form.AddArray("Bindings", "")
+			// nf.Space = true
 			for _, bind := range binds {
-				nf.AddProp("Service", NotNil(bind.ServiceId))
+				sec := nf.AddSection("*Service:"+NotNil(bind.ServiceId), "")
+				sec.AddProp("Service", NotNil(bind.ServiceId))
 				if bind.Name != nil {
-					nf.AddProp("Name", NotNil(bind.Name))
+					sec.AddProp("Name", NotNil(bind.Name))
 				}
 			}
 		}

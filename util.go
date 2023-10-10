@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	// "fmt"
+	"fmt"
+	"os"
 	"regexp"
 	//log "github.com/duglin/dlog"
+
+	"golang.org/x/term"
 )
 
 func ToJson(obj interface{}) string {
@@ -12,7 +15,41 @@ func ToJson(obj interface{}) string {
 	return string(data)
 }
 
+func Prompt(str string) byte { // lowercase letter
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	NoErr(err)
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	fmt.Printf("%s", str)
+	b := []byte{'0'}
+	_, err = os.Stdin.Read(b)
+	fmt.Print("\r\n")
+	NoErr(err)
+
+	if b[0] == 0x03 { // ctrl-c
+		term.Restore(int(os.Stdin.Fd()), oldState)
+		os.Exit(1)
+	}
+
+	if b[0] >= 'A' && b[0] <= 'Z' {
+		return b[0] - 'A' + 'a'
+	}
+
+	return b[0]
+}
+
 func StringPtr(str string) *string { return &str }
+
+func QuoteStrings(strs []string) string {
+	res := ""
+	for i, s := range strs {
+		if i > 0 {
+			res += " "
+		}
+		res += fmt.Sprintf("%q", s)
+	}
+	return res
+}
 
 func NotNil(pStr *string) string {
 	if pStr == nil {
