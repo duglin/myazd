@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+
+	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
 	//log "github.com/duglin/dlog"
-
-	"golang.org/x/term"
+	// "golang.org/x/term"
 )
 
 func ToJson(obj interface{}) string {
@@ -16,18 +18,23 @@ func ToJson(obj interface{}) string {
 }
 
 func Prompt(str string) byte { // lowercase letter
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	NoErr(err)
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	fmt.Printf("%s", str)
 	b := []byte{'0'}
-	_, err = os.Stdin.Read(b)
-	fmt.Print("\r\n")
+	fmt.Printf("%s", str)
+
+	// oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	// NoErr(err)
+	// // defer term.Restore(int(os.Stdin.Fd()), oldState)
+	// _, err := os.Stdin.Read(b)
+	// term.Restore(int(os.Stdin.Fd()), oldState)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if len(line) > 0 {
+		b[0] = line[0]
+	}
+	// fmt.Printf("\n")
+
 	NoErr(err)
 
 	if b[0] == 0x03 { // ctrl-c
-		term.Restore(int(os.Stdin.Fd()), oldState)
 		os.Exit(1)
 	}
 
@@ -38,7 +45,15 @@ func Prompt(str string) byte { // lowercase letter
 	return b[0]
 }
 
+func BoolPtr(val bool) *bool       { return &val }
+func IntPtr(val int) *int          { return &val }
 func StringPtr(str string) *string { return &str }
+func NilStringPtr(str string) *string {
+	if str == "" {
+		return nil
+	}
+	return &str
+}
 
 func QuoteStrings(strs []string) string {
 	res := ""
@@ -46,9 +61,58 @@ func QuoteStrings(strs []string) string {
 		if i > 0 {
 			res += " "
 		}
-		res += fmt.Sprintf("%q", s)
+		buf := bytes.Buffer{}
+		buf.WriteString("\"")
+		for ch := range s {
+			if ch == '"' {
+				buf.WriteString("\\")
+			}
+			buf.WriteByte(byte(ch))
+		}
+		buf.WriteString("\"")
+		res += buf.String()
 	}
 	return res
+}
+
+func ParseQuotedString(str string) []string {
+	words := []string{}
+
+	word := bytes.Buffer{}
+	inQuote := false
+	esc := false
+	for ch := range str {
+		if !inQuote && ch != '"' && ch != ' ' {
+			panic(fmt.Sprintf("Bad char %q in %q", ch, str))
+		}
+		if ch == '\\' {
+			if esc {
+				word.WriteByte('\\')
+			}
+			esc = !esc
+			continue
+		}
+		if ch == '"' {
+			if !inQuote {
+				inQuote = true
+				continue
+			}
+			inQuote = false
+			words = append(words, word.String())
+			word.Reset()
+			continue
+		}
+		if esc {
+			word.WriteByte('\\')
+			esc = false
+		}
+		word.WriteByte(byte(ch))
+	}
+
+	if len(words) == 0 {
+		words = nil
+	}
+	return words
 }
 
 func NotNil(pStr *string) string {

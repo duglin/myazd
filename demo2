@@ -1,5 +1,7 @@
 #!/bin/bash
 
+which az || echo 'az' must be in your PATH && exit 1
+
 export RETRYONFAIL=1
 export PATH=$PATH:$PWD
 . .demoscript

@@ -2,8 +2,8 @@
 azd
 .azx
 azx
-azx.mac
-azx.linux
-azx.exe
+azx-mac
+azx-linux
+azx-win.exe
 .DS_Store
 

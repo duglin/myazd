@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	log "github.com/duglin/dlog"
@@ -167,10 +168,11 @@ type AcaAppConfiguration struct {
 	Ingress *AcaAppIngress `json:"ingress,omitempty"`
 	// dapr
 	// maxInactiveRevisions
-	Service *struct {
-		Type *string `json:"type,omitempty"`
-	} `json:"service,omitempty"`
-	// service
+	Service *AcaAppService `json:"service,omitempty"`
+}
+
+type AcaAppService struct {
+	Type *string `json:"type,omitempty"`
 }
 
 type AcaAppEnv struct {
@@ -397,7 +399,6 @@ func (app *AcaApp) ToForm() *Form {
 
 	if res.NiceType == "aca-redis" {
 		form := NewForm()
-		form.AddProp("Name", app.Name)
 		form.AddProp("Service", NotNil(app.Properties.Configuration.Service.Type))
 		return form
 	}
@@ -509,6 +510,176 @@ func (app *AcaApp) ToForm() *Form {
 	return form
 }
 
+func (app *AcaApp) MustProperties() *AcaAppProperties {
+	if app.Properties == nil {
+		app.Properties = &AcaAppProperties{}
+	}
+	return app.Properties
+}
+
+func (app *AcaApp) MustConfiguration() *AcaAppConfiguration {
+	if props := app.MustProperties(); props.Configuration == nil {
+		props.Configuration = &AcaAppConfiguration{}
+	}
+	return app.Properties.Configuration
+}
+
+func (app *AcaApp) MustIngress() *AcaAppIngress {
+	if config := app.MustConfiguration(); config.Ingress == nil {
+		config.Ingress = &AcaAppIngress{}
+	}
+	return app.Properties.Configuration.Ingress
+}
+
+func (app *AcaApp) MustTemplate() *AcaAppTemplate {
+	if props := app.MustProperties(); props.Template == nil {
+		props.Template = &AcaAppTemplate{}
+	}
+	return app.Properties.Template
+}
+
+func (app *AcaApp) MustScale() *AcaAppScale {
+	if template := app.MustTemplate(); template.Scale == nil {
+		template.Scale = &AcaAppScale{}
+	}
+	return app.Properties.Template.Scale
+}
+
+func (c *AcaAppContainer) MustResources() *AcaAppResources {
+	if c.Resources == nil {
+		c.Resources = &AcaAppResources{}
+	}
+	return c.Resources
+}
+
+func (app *AcaApp) FromForm(r *ResourceBase, f *Form) {
+	var newApp *AcaApp
+
+	if f.Type != "Section" {
+		panic("Bad type: " + f.Type)
+	}
+
+	if r.NiceType == "aca-redis" {
+		newApp = &AcaApp{
+			ResourceBase: app.ResourceBase,
+		}
+
+		newApp.Properties = &AcaAppProperties{
+			Configuration: &AcaAppConfiguration{
+				Service: &AcaAppService{
+					Type: StringPtr(f.GetProp("Service")),
+				},
+			},
+		}
+	} else {
+		newApp = &AcaApp{
+			ResourceBase: app.ResourceBase,
+		}
+
+		items := f.Items // allows for a growing list
+
+		for len(items) > 0 {
+			item := items[0]
+			items = items[1:]
+
+			if item.Type == "Section" && item.Title == "" {
+				items = append(items, item.Items...)
+				continue
+			}
+
+			switch item.Title {
+			case "Name":
+				// Skip
+			case "Environment":
+				newApp.MustProperties().EnvironmentId = StringPtr(item.Value)
+			case "Location":
+				newApp.Location = StringPtr(item.Value)
+			case "Subscription":
+				newApp.Subscription = item.Value
+			case "ResourceGroup":
+				newApp.ResourceGroup = item.Value
+
+			case "Workload Profile Name":
+				newApp.MustProperties().WorkloadProfileName =
+					StringPtr(item.Value)
+
+			case "Ingress":
+				newApp.MustIngress().External = BoolPtr(item.Value == "external")
+				if val := item.GetProp("Port"); val != "" {
+					p, _ := strconv.Atoi(val)
+					newApp.MustIngress().TargetPort = &p
+				}
+
+			case "Containers": // "Containers" Array
+				for _, cSection := range item.Items { // cSection = Cont Section
+					c := &AcaAppContainer{}
+					newApp.MustTemplate().Containers =
+						append(newApp.MustTemplate().Containers, c)
+
+					for _, item := range cSection.Items {
+						switch item.Title {
+						case "Image":
+							c.Image = StringPtr(item.Value)
+						case "Command":
+							c.Command = ParseQuotedString(item.Value)
+						case "Args":
+							c.Args = ParseQuotedString(item.Value)
+
+						case "CPU":
+							f, _ := strconv.ParseFloat(item.Value, 64)
+							c.MustResources().CPU = &f
+						case "Memory":
+							c.MustResources().Memory = StringPtr(item.Value)
+
+						case "Min Scale":
+							s, _ := strconv.ParseInt(item.Value, 10, 64)
+							i := int(s)
+							newApp.MustScale().MinReplicas = &i
+
+						case "Max Scale":
+							s, _ := strconv.ParseInt(item.Value, 10, 64)
+							i := int(s)
+							newApp.MustScale().MaxReplicas = &i
+
+						case "Environment variables":
+							for _, env := range item.Items {
+								c.Env = append(c.Env, &AcaAppEnv{
+									Name:  StringPtr(env.Title),
+									Value: StringPtr(env.Value),
+								})
+							}
+
+						default:
+							panic("Unknown c.item: " + item.Title)
+						}
+					}
+				}
+
+			case "Bindings":
+				for _, bindSec := range item.Items { // bind=Section
+					svc := bindSec.GetProp("Service")
+					name := bindSec.GetProp("Name")
+
+					newApp.Properties.Template.ServiceBinds =
+						append(newApp.MustTemplate().ServiceBinds,
+							&AcaAppServiceBind{
+								ServiceId: NilStringPtr(svc),
+								Name:      NilStringPtr(name),
+							})
+				}
+
+			default:
+				panic("Unknown item: " + item.Title)
+			}
+		}
+	}
+
+	data, _ := json.MarshalIndent(newApp, "", "  ")
+
+	r.Object = newApp
+	r.RawData = data
+}
+
 func (app *AcaApp) ToARMJson() string {
 	WhyMarshal = "ARM"
 	data, _ := json.MarshalIndent(app, "", "  ")
@@ -517,9 +688,12 @@ func (app *AcaApp) ToARMJson() string {
 	return string(data)
 }
 
-func (app *AcaApp) HideServerFields(diffA ARMResource) {
-	// diffApp := diffA.(*AcaApp)
+func (app *AcaApp) ToJson() string {
+	data, _ := json.MarshalIndent(app, "", "  ")
+	return string(data)
+}
 
+func (app *AcaApp) HideServerFields() {
 	if app.Properties != nil && app.Properties.Configuration != nil {
 		c := app.Properties.Configuration
 		if (*c == AcaAppConfiguration{}) {
@@ -530,7 +704,8 @@ func (app *AcaApp) HideServerFields(diffA ARMResource) {
 
 func AcaFromARMJson(data []byte) *ResourceBase {
 	tmp := struct{ ID string }{}
-	json.Unmarshal(data, &tmp)
+	err := json.Unmarshal(data, &tmp)
+	NoErr(err, "Error parsing resource: %s", err)
 
 	resRef := ParseResourceID(tmp.ID)
 
@@ -857,10 +1032,3 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 		}
 	}
 }
-
-/*
-func (app *AcaApp) Save() {
-	log.VPrintf(0, "In aca-app save")
-	app.ResourceBase.Save()
-}
-*/

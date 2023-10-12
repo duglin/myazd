@@ -1,5 +1,7 @@
 #!/bin/bash
 
+which az > /dev/null 2>&1 || { echo "'az' must be in your PATH" ; exit 1  ; }
+
 export RETRYONFAIL=1
 export PATH=$PATH:$PWD
 . .demoscript
@@ -11,30 +13,51 @@ SUB=fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a
 LOC="'East US'"
 ENV=demo
 
-comment "Demo assumes you have an ACA env ('$ENV') already created"
-comment "MUST have 'az' in your PATH for auth purposes"
+comment --nolf "Demo assumes you have an ACA env ('$ENV') already created"
+comment "and you've set the RG,SUB,LOC,ENV values in this file correctly"
+# comment "MUST have 'az' in your PATH for auth purposes"
 
-rm -rf testDir2
-doit mkdir testDir2
-doit cd testDir2
-cd testDir2
+rm -rf testDir1
+doit mkdir testDir1
+doit cd testDir1
+cd testDir1
 
+comment "Init project with rg, sub and loc"
 doit --noscroll azx init -g "$RG" -s "$SUB" -l "$LOC"
-doit azx add aca-redis -n redis2 --environment "$ENV"
-doit azx add aca-app -n app2 -i duglin/aca-lister --external --bind redis2
+comment "Create a redis dev-mode service"
+doit azx add aca-redis -n redis1 --environment "$ENV"
+comment "Create an ACA app from existing image, externalized + bind to redis"
+doit azx add aca-app -n app1 -i duglin/aca-lister --external --bind redis1
 doit azx list
+comment "Everything is still local, so provision it in Azure now"
 doit azx up
-doit ls .azx/stage_default
-doit azx show aca-app -n app2
-doit azx show aca-app -n app2 -o json
-doit azx show aca-redis -n redis2
+# doit ls .azx/stage_default
+comment "Show the app in a human readable format"
+doit azx show aca-app -n app1
+# doit azx show aca-app -n app1 -o json
+# doit azx show aca-redis -n redis1
+comment "Deprovision everything from Azure"
 doit azx down --wait
+comment "Imagine we saved it all in git and cloned, so reprovision from scratch"
 doit azx up
-doit azx update aca-app -n app2 --unbind redis2
-doit azx show aca-app -n app2
-doit azx show aca-app -n app2 -o json
+# comment "Show that we can also unbind the app from redis, locally"
+# doit azx update aca-app -n app1 --unbind redis1
+# comment "Notice the 'binding' section is gone"
+doit azx show aca-app -n app1
+# doit azx show aca-app -n app1 -o json
+# doit azx up
+comment "Let's add an env var locally"
+doit azx update aca-app -n app1 -e abc=def
+comment "And do a change via the 'az' CLI to simulate a portal change"
+doit --noscroll az containerapp update -n app1 --unbind redis1
+comment "We now have 'drift', Azure != local IaC. Show the diff"
+doit azx diff aca-app/app1
+comment "Let's go thru each diff and accept each"
+doit azx sync aca-app/app1 # --all
+comment "Doing a diff with Azure still shows the local edits"
+doit azx diff aca-app/app1
+comment "So... push it to Azure"
 doit azx up
-doit --noscroll az containerapp update -n app2 --bind redis2
-doit azx diff aca-app/app2
-doit azx sync aca-app/app2 --all
+comment "Now the diff is empty!"
+doit azx diff aca-app/app1
 doit azx down

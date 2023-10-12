@@ -99,6 +99,10 @@ func (r *Redis) ToForm() *Form {
 	return NewForm()
 }
 
+func (r *Redis) FromForm(res *ResourceBase, f *Form) {
+	ErrStop("Not implemented yet")
+}
+
 func (r *Redis) ToARMJson() string {
 	saveID := r.ID
 	r.ID = ""
@@ -106,6 +110,16 @@ func (r *Redis) ToARMJson() string {
 	WhyMarshal = "ARM"
 	data, _ := json.MarshalIndent(r, "", "  ")
 	WhyMarshal = ""
+
+	r.ID = saveID
+	return string(data)
+}
+
+func (r *Redis) ToJson() string {
+	saveID := r.ID
+	r.ID = ""
+
+	data, _ := json.MarshalIndent(r, "", "  ")
 
 	r.ID = saveID
 	return string(data)
@@ -148,5 +162,5 @@ func (r  *Redis) Save() {
 }
 */
 
-func (r *Redis) HideServerFields(diffR ARMResource) {
+func (r *Redis) HideServerFields() {
 }
