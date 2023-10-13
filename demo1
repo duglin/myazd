@@ -15,8 +15,20 @@ ENV=demo
 
 comment --nolf "Demo assumes you have an ACA env ('$ENV') already created"
 comment "and you've set the RG,SUB,LOC,ENV values in this file correctly"
+comment --pauseafter "Press any key when ready"
+clear
 # comment "MUST have 'az' in your PATH for auth purposes"
 
+comment --nolf "Summary of exploration:"
+comment --nolf "1 - can we hide IaC (eg ARM/Bicep) from the dev but still"
+comment --nolf "    allow them to use IaC as part of their gitOps flow?"
+comment --nolf "2 - can we offer a simplified CLI UX (eg az-like) for azd"
+comment --nolf "    when the user wants to create/edit their IaC"
+comment --nolf "3 - can we offer an 'escape hatch' to the IaC for the very"
+comment --nolf "    advanced use cases where they need to edit IaC manually"
+comment        "4 - dealing with edits made outside of local azd/IaC (drift)"
+
+comment "Demo part 1: IaC management w/o seeing IaC directly"
 rm -rf testDir1
 doit mkdir testDir1
 doit cd testDir1
@@ -24,40 +36,75 @@ cd testDir1
 
 comment "Init project with rg, sub and loc"
 doit --noscroll azx init -g "$RG" -s "$SUB" -l "$LOC"
-comment "Create a redis dev-mode service"
+comment "Create a redis dev-mode service (our ACA env '$ENV' already exists)"
 doit azx add aca-redis -n redis1 --environment "$ENV"
-comment "Create an ACA app from existing image, externalized + bind to redis"
+
+comment "Create an ACA app from existing image & externalized & bind to redis"
 doit azx add aca-app -n app1 -i duglin/aca-lister --external --bind redis1
-doit azx list
-comment "Everything is still local, so provision it in Azure now"
+
+comment --nolf "Some things to note"
+comment --nolf "1 - No IaC exposed during the creation of a new resource"
+comment --nolf "2 - CLI UX is az-like"
+comment        "3 - IaC is created on disk, nothing is in Azure yet"
+
+comment "If user ever needs access to IaC, they can find it under .azx dir"
+doit ls .azx/stage_default
+
+# doit azx list
+
+comment "When 'show'ing a resource, can see 'human' or 'machine' readable"
+doit azx show aca-app -n app1 "    # Human readable"
+doit azx show aca-app -n app1 -o json "    # Machine readable"
+comment --nolf "Notice the only 'values' shown are what the user has provided."
+comment "Not cluttered with info they haven't expressed an interest in, yet"
+
+comment --nolf "Everything is still local, so provision it in Azure now."
+comment        "Notice redis goes first because the app depends on it"
 doit azx up
-# doit ls .azx/stage_default
-comment "Show the app in a human readable format"
-doit azx show aca-app -n app1
-# doit azx show aca-app -n app1 -o json
-# doit azx show aca-redis -n redis1
-comment "Deprovision everything from Azure"
-doit azx down --wait
-comment "Imagine we saved it all in git and cloned, so reprovision from scratch"
-doit azx up
-# comment "Show that we can also unbind the app from redis, locally"
-# doit azx update aca-app -n app1 --unbind redis1
-# comment "Notice the 'binding' section is gone"
-doit azx show aca-app -n app1
-# doit azx show aca-app -n app1 -o json
+
+comment --nolf "When 'show'ing a resource, can see IaC(above), REST (IaC+defaults),"
+comment        "or what's in Azure. In 'human' or 'machine' readable."
+doit azx show aca-app -n app1 --from rest
+comment "Notice it has fields that azx filled in automatically for the user"
+comment "Now look at what's in Azure in JSON instead of human readable"
+doit azx show aca-app -n app1 --from azure -o json
+
+# comment "Imagine we pushed to github. Simulate clone+deploy to recreate"
+# comment "First, de-provision everything in Azure"
+# doit azx down --wait
+
+# comment "Now bring it all back up"
 # doit azx up
-comment "Let's add an env var locally"
-doit azx update aca-app -n app1 -e abc=def
-comment "And do a change via the 'az' CLI to simulate a portal change"
-doit --noscroll az containerapp update -n app1 --unbind redis1
-comment "We now have 'drift', Azure != local IaC. Show the diff"
+
+comment --nolf "Demo part 2: Dealing with IaC 'drift'"
+comment "- Changes are made in Azure that our local IaC doesn't know about"
+
+comment "Change something locally : remove the binding"
+doit azx update aca-app -n app1 --unbind redis1
+
+comment "Change something in Azure : add an environment variable"
+doit --noscroll az containerapp update -n app1 --set-env-vars abc=def
+
+comment --nolf "We now have 'drift', Azure != local IaC. Show the diff."
+comment "Notice it shows it in the context of the human readable output"
 doit azx diff aca-app/app1
-comment "Let's go thru each diff and accept each"
-doit azx sync aca-app/app1 # --all
-comment "Doing a diff with Azure still shows the local edits"
+
+comment --nolf "We can now resolve the diff via the 'sync' command."
+comment "Accept Azure change(new env var), and reject Azure's old bind"
+doit --noscroll azx sync aca-app/app1
+
+comment --nolf "Doing a diff still shows the local 'unbind' because we haven't"
+comment "provisioned back to Azure yet"
 doit azx diff aca-app/app1
+
 comment "So... push it to Azure"
 doit azx up
+
 comment "Now the diff is empty!"
 doit azx diff aca-app/app1
+
+comment "Clean up"
 doit azx down
+
+cd ..
+rm -f out cmds

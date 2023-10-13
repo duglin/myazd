@@ -419,6 +419,7 @@ func (app *AcaApp) ToForm() *Form {
 	}
 
 	form := NewForm()
+	form.Title = "*ACA-App(" + app.Name + ")"
 	form.AddProp("Name", app.Name)
 	form.AddProp("Environment", NotNil(app.Properties.EnvironmentId))
 	if app.Location != nil {

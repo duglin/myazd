@@ -19,7 +19,7 @@ func ToJson(obj interface{}) string {
 
 func Prompt(str string) byte { // lowercase letter
 	b := []byte{'0'}
-	fmt.Printf("%s", str)
+	fmt.Printf("%s ", str)
 
 	// oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	// NoErr(err)

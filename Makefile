@@ -14,7 +14,8 @@ test: ${APP}
 	./${APP} add aca-app -n poc --image duglin/echo --environment demo
 
 package:
-	tar -cf ${APP}.tar ${APP}-linux .demoscript demo1 demo2 --transform s/${APP}--linux/${APP}/
+	rm -f demo.tar
+	tar -cf demo-${APP}.tar ${APP}-linux .demoscript demo1 demo2
 
 clean:
 	rm -f ${APP} ${APP}-mac ${APP}-linux ${APP}-win.exe
