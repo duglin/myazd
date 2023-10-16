@@ -178,18 +178,3 @@ func ErrStop(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, args...)
 	os.Exit(1)
 }
-
-func readJsonFile(file string) ([]byte, error) {
-	var data []byte
-	var err error
-	if file == "" {
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(file)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return JsonCDecode(data)
-}

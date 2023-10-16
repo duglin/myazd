@@ -16,7 +16,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -489,41 +488,6 @@ func downloadResource(sub, rg, resType, resName, api string) ([]byte, error) {
 	}
 
 	return httpRes.Body, nil
-}
-
-func readIncludeFile(baseFile string, inc string) ([]byte, error) {
-	file := ""
-	if baseFile == "-" {
-		return readJsonFile(inc)
-	} else if strings.HasPrefix(baseFile, "http") {
-		daURL, _ := url.Parse(baseFile)
-		path := daURL.Path
-		path = strings.TrimRight(path, "/")
-		i := strings.LastIndex(path, "/")
-		if i == -1 {
-			daURL.Path = inc
-		} else {
-			daURL.Path = path[:i+1] + inc
-		}
-
-		res, err := http.Get(daURL.String())
-		if err != nil {
-			return nil, err
-		}
-		if res.StatusCode != 200 {
-			return nil, fmt.Errorf("Error reading include http file(%s): %s",
-				daURL.String(), res.Status)
-		}
-		return io.ReadAll(res.Body)
-	} else {
-		i := strings.LastIndex(baseFile, fmt.Sprintf("%c", os.PathSeparator))
-		if i == -1 {
-			return readJsonFile(inc)
-		}
-		return readJsonFile(baseFile[:i+1] + inc)
-	}
-
-	return readJsonFile(file)
 }
 
 func ResourceFromFile(stage string, name string) (*ResourceBase, error) {
