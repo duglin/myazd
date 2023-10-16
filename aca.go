@@ -347,7 +347,10 @@ func (aat *AcaAppTemplate) MarshalJSON() ([]byte, error) {
 func (aap *AcaAppProperties) ResolveEnvironmentId() *ResourceReference {
 	ref := aap.EnvironmentId
 	if ref == nil || *ref == "" {
-		ErrStop("AcaApp is missing an \"environmentId\" value")
+		ref = NilStringPtr(GetConfigProperty("defaults.aca-env"))
+	}
+	if ref == nil || *ref == "" {
+		ErrStop("AcaApp, or AcaService, is missing an \"environment\" value")
 	}
 
 	// Set defaults
@@ -356,7 +359,7 @@ func (aap *AcaAppProperties) ResolveEnvironmentId() *ResourceReference {
 		ResourceGroup: GetConfigProperty("defaults.ResourceGroup"),
 		Type:          "Microsoft.App/managedEnvironments",
 		APIVersion:    GetResourceDef("Microsoft.App/managedEnvironments").Defaults["APIVERSION"],
-		Origin:        *(aap.EnvironmentId),
+		Origin:        *(ref),
 	}
 
 	// Now, override with env values
@@ -421,8 +424,10 @@ func (app *AcaApp) ToForm() *Form {
 	form := NewForm()
 	form.Title = "*ACA-App(" + app.Name + ")"
 	form.AddProp("Name", app.Name)
-	form.AddProp("Environment", NotNil(app.Properties.EnvironmentId))
-	if app.Location != nil {
+	if app.Properties != nil && NotNil(app.Properties.EnvironmentId) != "" {
+		form.AddProp("Environment", NotNil(app.Properties.EnvironmentId))
+	}
+	if NotNil(app.Location) != "" {
 		form.AddProp("Location", NotNil(app.Location))
 	}
 	form.AddProp("Subscription", app.Subscription)
@@ -766,21 +771,27 @@ func AddAcaServiceFunc(cmd *cobra.Command, args []string) {
 	app.Stage = GetConfigProperty("currentStage")
 	app.Filename = fmt.Sprintf("%s-%s.json", app.NiceType, app.Name)
 
-	if cmd.Flags().Changed("environment") && GetConfigProperty("aca-env") == "" {
-		env, _ := cmd.Flags().GetString("environment")
-		SetConfigProperty("defaults.aca-env", env, false)
+	configEnv := GetConfigProperty("defaults.aca-env")
+	if cmd.Flags().Changed("environment") {
+		env := FlagAsString(cmd, "environment")
+		app.MustProperties().EnvironmentId = NilStringPtr(env)
+
+		if env != "" && configEnv == "" {
+			// If default isn't set, and we have a value, set it
+			SetConfigProperty("defaults.aca-env", env, false)
+			configEnv = env
+		}
 	}
 
-	set := SetStringProp(app, cmd.Flags(), "environment",
-		`{"properties":{"environmentId":%s}}`)
-	if !set && app.Properties == nil || app.Properties.EnvironmentId == nil {
-		env := GetConfigProperty("defaults.aca-env")
-		if env == "" {
-			ErrStop("Missing the aca-env value. "+
-				"Use either '--environment=???' "+
-				"or '%s set defaults.aca-env=???'", APP)
-		}
-		SetJson(app, `{"properties":{"environmentId":%q}}`, env)
+	if NotNil(app.MustProperties().EnvironmentId) == "" && configEnv != "" {
+		app.MustProperties().EnvironmentId = NilStringPtr(configEnv)
+	}
+
+	if NotNil(app.MustProperties().EnvironmentId) == "" {
+		// Notice we allow setting it to "" but only if there's a default.
+		// Should probably be a warning instead of a hard stop.
+		ErrStop("Missing the aca-env value. Use either '--environment=' "+
+			"or '%s set defaults.aca-env='", APP)
 	}
 
 	if cmd.Flags().Changed("subscription") {
@@ -839,9 +850,6 @@ func AddAcaAppFunc(cmd *cobra.Command, args []string) {
 	app.Stage = GetConfigProperty("currentStage")
 	app.Filename = fmt.Sprintf("%s-%s.json", app.NiceType, app.Name)
 
-	// App specific stuff
-	// app.Location = StringPtr(GetConfigProperty("defaults.Location"))
-
 	app.ProcessFlags(cmd)
 	app.Save()
 
@@ -879,22 +887,27 @@ func (app *AcaApp) ProcessFlags(cmd *cobra.Command) {
 	SetStringProp(app, cmd.Flags(), "image",
 		`{"properties":{"template":{"containers":[{"image":%s}]}}}`)
 
-	// TODO make sure 'environ' exists
-	if cmd.Flags().Changed("environment") && GetConfigProperty("aca-env") == "" {
-		env, _ := cmd.Flags().GetString("environment")
-		SetConfigProperty("defaults.aca-env", env, false)
+	configEnv := GetConfigProperty("defaults.aca-env")
+	if cmd.Flags().Changed("environment") {
+		env := FlagAsString(cmd, "environment")
+		app.MustProperties().EnvironmentId = NilStringPtr(env)
+
+		if env != "" && configEnv == "" {
+			// If default isn't set, and we have a value, set it
+			SetConfigProperty("defaults.aca-env", env, false)
+			configEnv = env
+		}
 	}
 
-	set := SetStringProp(app, cmd.Flags(), "environment",
-		`{"properties":{"environmentId":%s}}`)
-	if !set && app.Properties != nil && app.Properties.EnvironmentId == nil {
-		env := GetConfigProperty("defaults.aca-env")
-		if env == "" {
-			ErrStop("Missing the aca-env value. "+
-				"Use either '--environment=???' "+
-				"or '%s set defaults.aca-env=???'", APP)
-		}
-		SetJson(app, `{"properties":{"environmentId":%q}}`, env)
+	if NotNil(app.MustProperties().EnvironmentId) == "" && configEnv != "" {
+		app.MustProperties().EnvironmentId = NilStringPtr(configEnv)
+	}
+
+	if NotNil(app.MustProperties().EnvironmentId) == "" {
+		// Notice we allow setting it to "" but only if there's a default.
+		// Should probably be a warning instead of a hard stop.
+		ErrStop("Missing the aca-env value. Use either '--environment=' "+
+			"or '%s set defaults.aca-env='", APP)
 	}
 
 	if cmd.Flags().Changed("subscription") {

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-which az || echo 'az' must be in your PATH && exit 1
+which az > /dev/null 2>&1 || { echo "'az' must be in your PATH" ; exit 1  ; }
 
 export RETRYONFAIL=1
 export PATH=$PATH:$PWD
@@ -19,7 +19,6 @@ comment --nolf '  `azx config set defaults.ResourceGroup=...`'
 comment --nolf '  `azx config set defaults.Subscription=...`'
 comment "before running the demo"
 comment "Demo assumes you have an ACA env ($ENV) already created"
-comment "MUST have 'az' in your PATH for auth purposes"
 
 doit --noscroll clear
 

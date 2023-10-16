@@ -284,7 +284,7 @@ type ResourceReference struct {
 	Name          string
 	Property      string
 
-	Origin string
+	Origin string // ref(string) used to parse/populate values (for errs)
 }
 
 func (rr *ResourceReference) AsID() string {

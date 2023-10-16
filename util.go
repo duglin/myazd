@@ -8,9 +8,17 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+
+	"github.com/spf13/cobra"
 	//log "github.com/duglin/dlog"
 	// "golang.org/x/term"
 )
+
+func FlagAsString(cmd *cobra.Command, name string) string {
+	val, err := cmd.Flags().GetString(name)
+	NoErr(err)
+	return val
+}
 
 func ToJson(obj interface{}) string {
 	data, _ := json.MarshalIndent(obj, "", "  ")

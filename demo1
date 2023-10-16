@@ -28,7 +28,7 @@ comment --nolf "- can we offer an 'escape hatch' to the IaC for the very"
 comment --nolf "  advanced use cases where they need to edit IaC manually"
 comment --nolf "- dealing with edits made outside of local azd/IaC (drift)"
 comment --nolf ""
-comment --nolf "Solution:"
+comment --nolf "Solution Summary:"
 comment --nolf "- support az-like syntax on azd CLI"
 comment --nolf "- map those requests to edits of local IaC files"
 comment --nolf "- local IaC files only include data user has provided"
@@ -39,7 +39,9 @@ comment --nolf "  needed, user can edit them directly for advanced features"
 comment --nolf "  without learning (yet another) IaC format"
 comment        "- drift is solved via diff/sync commands (think 'git rebase')"
 
-comment "Demo part 1: IaC management w/o seeing IaC directly"
+comment --nolf "Demo part 1: IaC management w/o seeing IaC directly"
+comment --nolf "- scenario: from scratch, create ACA app + dev-mode Redis"
+comment        "- use a clean dir to show we're not cheating"
 rm -rf testDir1
 doit mkdir testDir1
 doit cd testDir1
