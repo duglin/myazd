@@ -6,8 +6,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 	//log "github.com/duglin/dlog"
@@ -157,4 +159,37 @@ func ShrinkJson(daJson []byte) []byte {
 	json.Unmarshal(daJson, &tmp)
 	daJson, _ = json.MarshalIndent(tmp, "", "  ")
 	return daJson
+}
+
+func NoErr(err error, args ...interface{}) {
+	if err == nil {
+		return
+	}
+	if len(args) == 0 {
+		args = []interface{}{err.Error()}
+	}
+	ErrStop(args[0].(string), args[1:]...)
+}
+
+func ErrStop(format string, args ...interface{}) {
+	if !strings.HasSuffix(format, "\n") {
+		format += "\n"
+	}
+	fmt.Fprintf(os.Stderr, format, args...)
+	os.Exit(1)
+}
+
+func readJsonFile(file string) ([]byte, error) {
+	var data []byte
+	var err error
+	if file == "" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(file)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return JsonCDecode(data)
 }

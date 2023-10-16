@@ -49,48 +49,6 @@ var config = (map[string]string)(nil)
 type ARMParser func([]byte) *ResourceBase // FromARMJson
 var RegisteredParsers = []ARMParser{}     // FromARMJson
 
-type ARMResource interface {
-	DependsOn() []*ResourceReference
-	ToJson() string
-	ToARMJson() string // json
-	HideServerFields()
-	ToForm() *Form
-	FromForm(*ResourceBase, *Form) // converts Form to Azure Json
-}
-
-func NoErr(err error, args ...interface{}) {
-	if err == nil {
-		return
-	}
-	if len(args) == 0 {
-		args = []interface{}{err.Error()}
-	}
-	ErrStop(args[0].(string), args[1:]...)
-}
-
-func ErrStop(format string, args ...interface{}) {
-	if !strings.HasSuffix(format, "\n") {
-		format += "\n"
-	}
-	fmt.Fprintf(os.Stderr, format, args...)
-	os.Exit(1)
-}
-
-func readJsonFile(file string) ([]byte, error) {
-	var data []byte
-	var err error
-	if file == "" {
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(file)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return JsonCDecode(data)
-}
-
 func getToken() {
 	if Token != "" {
 		return
@@ -909,7 +867,7 @@ func BuildDependencyTree(resources map[string]*ResourceBase, findDeps bool) *Dep
 			dependsOn: map[string]bool{}, // id->bool
 			level:     0,
 		}
-		for _, dep := range res.Object.DependsOn() {
+		for _, dep := range res.DependsOn() {
 			// Only keep deps we control
 			// if resources[strings.ToLower(dep.AsID())] != nil {
 			depResourceBase := controlResources[strings.ToLower(dep.AsID())]
@@ -1160,6 +1118,15 @@ type ResourceBase struct {
 	RawData []byte      `json:"-"`
 }
 
+type ARMResource interface {
+	DependsOn() []*ResourceReference
+	ToJson() string
+	ToARMJson() string // json
+	HideServerFields()
+	ToForm() *Form
+	FromForm(*ResourceBase, *Form) // converts Form to Azure Json
+}
+
 func (r *ResourceBase) AsRef() *ResourceReference {
 	return &ResourceReference{
 		Subscription:  r.Subscription,
@@ -1169,6 +1136,14 @@ func (r *ResourceBase) AsRef() *ResourceReference {
 		APIVersion:    r.APIVersion,
 	}
 }
+
+func (r *ResourceBase) DependsOn() []*ResourceReference { return r.Object.DependsOn() }
+
+func (r *ResourceBase) ToJson() string    { return r.Object.ToJson() }
+func (r *ResourceBase) ToARMJson() string { return r.Object.ToARMJson() }
+func (r *ResourceBase) HideServerFields() { r.Object.HideServerFields() }
+func (r *ResourceBase) ToForm() *Form     { return r.Object.ToForm() }
+func (r *ResourceBase) FromForm(f *Form)  { r.Object.FromForm(r, f) }
 
 func (r *ResourceBase) AsID() string {
 	rr := ResourceReference{
@@ -1200,7 +1175,7 @@ func (r *ResourceBase) Save() {
 	// Resources[strings.ToLower(r.ID)] = r.Object
 
 	resources := GetStageResources("")
-	depends := r.Object.DependsOn()
+	depends := r.DependsOn()
 	for _, dep := range depends {
 		id := strings.ToLower(dep.AsID())
 		// res := Resources[id]
@@ -1234,7 +1209,7 @@ func (r *ResourceBase) Provision() {
 	log.VPrintf(2, ">Enter: RB:Provision (%s)", r.NiceType+"/"+r.Name)
 	defer log.VPrintf(2, "<Exit: RB:Provision")
 
-	data := r.Object.ToARMJson()
+	data := r.ToARMJson()
 	resURL := r.AsURL()
 	resDef := GetResourceDef(r.Type)
 
@@ -1321,7 +1296,7 @@ func (r *ResourceBase) Download() ([]byte, error) {
 
 func (r *ResourceBase) GetARMResource() *ResourceBase {
 	tmp := map[string]json.RawMessage{}
-	json.Unmarshal([]byte(r.Object.ToARMJson()), &tmp)
+	json.Unmarshal([]byte(r.ToARMJson()), &tmp)
 	buf, _ := json.Marshal(tmp)
 	res, err := ResourceFromBytes(r.Stage, r.NiceType+"/"+r.Name, buf)
 	if err != nil {
@@ -1354,12 +1329,12 @@ func (r *ResourceBase) Diff(sync bool, all bool) { // (string, error) {
 	log.VPrintf(2, ">Enter: RB:Diff (%s)", r.NiceType+"/"+r.Name)
 	defer log.VPrintf(2, "<Exit: RB:Diff")
 
-	armForm := r.GetARMResource().Object.ToForm()
+	armForm := r.GetARMResource().ToForm()
 	originalArmForm := armForm.Clone()
 
 	azure := r.GetAzureResource()
-	azure.Object.HideServerFields()
-	azureForm := azure.Object.ToForm()
+	azure.HideServerFields()
+	azureForm := azure.ToForm()
 
 	armForm.Diff(azureForm, &diffContext{
 		title: fmt.Sprintf("Diff %q: < local   > azure",
@@ -1378,13 +1353,13 @@ func (r *ResourceBase) Diff(sync bool, all bool) { // (string, error) {
 		}
 		// fmt.Printf("\n>> Patch:\n%s\n", diffForm.ToString())
 
-		rawForm := r.Object.ToForm()
+		rawForm := r.ToForm()
 		rawForm.Patch(diffForm)
 
-		r.Object.FromForm(r, rawForm)
-		// fmt.Printf(">> New Json:\n%s\n", r.Object.ToJson())
+		r.FromForm(rawForm)
+		// fmt.Printf(">> New Json:\n%s\n", r.ToJson())
 		r.Save()
-		// fmt.Printf("\n>> Sync result:\n%s\n", r.Object.ToForm().ToString())
+		// fmt.Printf("\n>> Sync result:\n%s\n", r.ToForm().ToString())
 	}
 }
 
@@ -1394,7 +1369,7 @@ func (r *ResourceBase) JsonDiff() (string, error) {
 
 	// Save it as ARM Json and then covert it back into a ResourceBase
 	tmp := map[string]json.RawMessage{}
-	json.Unmarshal([]byte(r.Object.ToARMJson()), &tmp)
+	json.Unmarshal([]byte(r.ToARMJson()), &tmp)
 	buf, _ := json.Marshal(tmp)
 	res, err := ResourceFromBytes(r.Stage, r.NiceType+"/"+r.Name, buf)
 	if err != nil {
@@ -1415,7 +1390,7 @@ func (r *ResourceBase) JsonDiff() (string, error) {
 	if strings.EqualFold(res.ID, azure.ID) {
 		azure.ID = res.ID
 	}
-	azure.Object.HideServerFields()
+	azure.HideServerFields()
 
 	srcJson, _ := json.MarshalIndent(res.Object, "", "  ")
 	tgtJson, _ := json.MarshalIndent(azure.Object, "", "  ")
@@ -1587,7 +1562,7 @@ func ShowFunc(cmd *cobra.Command, args []string) {
 
 	if from == "iac" || from == "rest" {
 		if from == "rest" {
-			data = []byte(res.Object.ToARMJson())
+			data = []byte(res.ToARMJson())
 		}
 	} else if from == "azure" {
 		data, err = res.Download()
@@ -1616,7 +1591,7 @@ func ShowFunc(cmd *cobra.Command, args []string) {
 
 	// Must be "pretty"
 	res, err = ResourceFromBytes(stage, name, data)
-	form := res.Object.ToForm()
+	form := res.ToForm()
 	// form.Dump()
 	fmt.Printf("%s", form.ToString())
 }
