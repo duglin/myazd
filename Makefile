@@ -16,6 +16,7 @@ test: ${APP}
 package:
 	rm -f demo.tar
 	tar -cf demo-${APP}.tar ${APP}-linux .demoscript demo1 demo2
+	cp demo-azx.tar "${HOME}/OneDrive - Microsoft/public/"
 
 clean:
 	rm -f ${APP} ${APP}-mac ${APP}-linux ${APP}-win.exe

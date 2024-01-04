@@ -23,9 +23,9 @@ comment --nolf "AZD Challenges:"
 comment --nolf "- can we hide IaC (eg ARM/Bicep) from the dev but still"
 comment --nolf "  allow them to use IaC as part of their gitOps flow?"
 comment --nolf "- can we offer a simplified CLI UX (eg az-like) for azd"
-comment --nolf "  when the user wants to create/edit their IaC"
+comment --nolf "  when the user wants to create/edit their IaC?"
 comment --nolf "- can we offer an 'escape hatch' to the IaC for the very"
-comment --nolf "  advanced use cases where they need to edit IaC manually"
+comment --nolf "  advanced use cases where they need to edit IaC manually?"
 comment --nolf "- dealing with edits made outside of local azd/IaC (drift)"
 comment --nolf ""
 comment --nolf "Solution Summary:"
@@ -77,10 +77,10 @@ doit azx up
 
 comment --nolf "When 'show'ing a resource, can see IaC(above), REST (IaC+defaults),"
 comment        "or what's in Azure. In 'human' or 'machine' readable."
-doit azx show aca-app -n app1 --from rest
+doit azx show aca-app -n app1 --from rest "       # Human readable + defaults"
 comment "Notice it has fields that azx filled in automatically for the user"
 comment "Now look at what's in Azure in JSON instead of human readable"
-doit azx show aca-app -n app1 --from azure -o json
+doit azx show aca-app -n app1 --from azure -o json "  # Machine readable from Azure"
 
 # comment "Imagine we pushed to github. Simulate clone+deploy to recreate"
 # comment "First, de-provision everything in Azure"
@@ -95,15 +95,18 @@ comment "- Changes are made in Azure that our local IaC doesn't know about"
 comment "Change something locally : remove the binding"
 doit azx update aca-app -n app1 --unbind redis1
 
-comment "Change something in Azure : add an environment variable"
-doit --noscroll az containerapp update -n app1 --set-env-vars abc=def
+comment "Change something in Azure : add an environment variable, set max scale"
+doit --noscroll az containerapp update -n app1 --set-env-vars abc=def --max-replicas=9
 
 comment --nolf "We now have 'drift', Azure != local IaC. Show the diff."
-comment "Notice it shows it in the context of the human readable output"
 doit azx diff aca-app/app1
 
-comment --nolf "We can now resolve the diff via the 'sync' command."
-comment "Accept Azure change(new env var), and reject Azure's old bind"
+comment "Notice:"
+comment "- it shows it in the context of the human readable output."
+comment '- "Max Scale: 10" wasn't set by the user, it's a default value'
+comment ""
+comment --nolf "We can now resolve the diffs via the 'sync' command."
+comment "Accept Azure changes(new env var,scale), and reject Azure's old bind"
 doit --noscroll azx sync aca-app/app1
 
 comment --nolf "Doing a diff still shows the local 'unbind' because we haven't"

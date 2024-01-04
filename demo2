@@ -48,7 +48,7 @@ comment "Now, look under the covers at its IaC file."
 doit azx show aca-app -n myapp -o json
 comment --nolf "Notice there's nothing in there that the user didn't provide."
 comment --nolf "So while the exact syntax might be new, it should be an easy"
-comment "mapping from what they specific on the CLI"
+comment "mapping from what they specified on the CLI"
 
 # comment --nolf "For geeks, show what the REST API will send. Notice some ACA"
 # comment "required fields and smart defaults are filled in automatically"
@@ -71,7 +71,8 @@ doit azx config set defaults.up=true
 comment "Update the app to connect to Redis and show app forms of the"
 doit azx update aca-app -n myapp --bind myredis
 
-comment "app to show the new 'binding' section" # , as well what Azure has"
+# comment "Show some of the ways to 'show' an app (locally and in Azure)"
+comment "Show the app, notice it has a Binding section"
 doit azx show aca-app -n myapp
 # doit azx show aca-app -n myapp -o json
 # doit azx show aca-app -n myapp --from rest -o json
@@ -124,9 +125,9 @@ doit --noscroll az containerapp update -n myapp --max-replicas=9
 comment 'Now diff our copy with Azure'
 doit azx diff aca-app/myapp
 
-comment --nolf "Notice that 'maxReplicas" is a defaulted value, not user"
+comment --nolf "Notice that 'maxReplicas' is a defaulted value, not user"
 comment --nolf "provided, it checked all fields."
-comment Rebase is not implemented yet, but you get the idea..."
+comment Rebase is not shown yet (see demo1), but you get the idea..."
 
 comment clean up
 doit azx down
