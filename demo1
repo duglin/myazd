@@ -41,7 +41,8 @@ comment        "- drift is solved via diff/sync commands (think 'git rebase')"
 
 comment --nolf "Demo part 1: IaC management w/o seeing IaC directly"
 comment --nolf "- scenario: from scratch, create ACA app + dev-mode Redis"
-comment        "- use a clean dir to show we're not cheating"
+comment --nolf "- use a clean dir to show we're not cheating"
+comment        "- PoC uses REST/JSON instead of Bicep just for convenience"
 rm -rf testDir1
 doit mkdir testDir1
 doit cd testDir1
@@ -118,6 +119,25 @@ doit azx up
 
 comment "Now the diff is empty!"
 doit azx diff aca-app/app1
+
+comment --nolf "Demo part 3: Breadcumbs..."
+comment "- Use the CLI like 'az' but save results in local IaC as we go"
+comment "- Same basic idea but avoids the manual 'up' action after each step"
+
+comment "Update the env var locally AND immediately in Azure"
+doit azx update aca-app -n app1 --env abc=DEF --up
+
+comment "Prove it's in Azure"
+doit azx show aca-app -n app1 --from azure
+
+comment "Turn on auto-provision because I'm getting lazy"
+doit azx config set defaults.up=true
+
+comment "Now re-bind to redis, happens locally and in Azure"
+doit azx update aca-app -n app1 --bind redis1
+
+comment "Prove it's locally too"
+doit azx show aca-app -n app1
 
 comment "Clean up"
 doit azx down
