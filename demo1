@@ -19,7 +19,7 @@ comment --pauseafter "Press any key when ready"
 clear
 # comment "MUST have 'az' in your PATH for auth purposes"
 
-comment --nolf "AZD Challenges:"
+comment --nolf "Challenges:"
 comment --nolf "- can we hide IaC (eg ARM/Bicep) from the dev but still"
 comment --nolf "  allow them to use IaC as part of their gitOps flow?"
 comment --nolf "- can we offer a simplified CLI UX (eg az-like) for azd"
@@ -37,7 +37,9 @@ comment --nolf "  prior to being sent to Azure"
 comment --nolf "- local IaC files are based on official Azure IaC, so, when"
 comment --nolf "  needed, user can edit them directly for advanced features"
 comment --nolf "  without learning (yet another) IaC format"
-comment        "- drift is solved via diff/sync commands (think 'git rebase')"
+comment --nolf "- drift is solved via diff/sync commands (think 'git rebase')"
+comment --pauseafter ""
+clear
 
 comment --nolf "Demo part 1: IaC management w/o seeing IaC directly"
 comment --nolf "- scenario: from scratch, create ACA app + dev-mode Redis"
@@ -121,7 +123,7 @@ comment "Now the diff is empty!"
 doit azx diff aca-app/app1
 
 comment --nolf "Demo part 3: Breadcumbs..."
-comment "- Use the CLI like 'az' but save results in local IaC as we go"
+comment --nolf "- Use the CLI like 'az' but save results in local IaC as we go"
 comment "- Same basic idea but avoids the manual 'up' action after each step"
 
 comment "Update the env var locally AND immediately in Azure"
@@ -138,6 +140,13 @@ doit azx update aca-app -n app1 --bind redis1
 
 comment "Prove it's locally too"
 doit azx show aca-app -n app1
+
+comment --nolf "This allows a user, who doesn't immediately care about IaC, to "
+comment --nolf "use an AZ-like CLI to interatively construct their app's "
+comment --nolf "config and then save the results in github by saving the "
+comment --nolf "auto-generated IaC files."
+comment --nolf "They don't need to 'remember' all of the things they set and"
+comment --pauseafter "recreate the uber AZ-like command or IaC files"
 
 comment "Clean up"
 doit azx down
