@@ -9,14 +9,17 @@ ${APP} ${APP}-mac ${APP}-linux ${APP}-win.exe: *.go
 	ln -fs ./${APP}-mac ./${APP}
 
 test: ${APP}
-	rm -rf .${APP}
-	./${APP} init -f
+	rm -rf .${APP}       # erase generated/config files
+	./${APP} init -f     # recreate them
 	./${APP} add aca-app -n poc --image duglin/echo --environment demo
 
-package:
-	rm -f demo.tar
-	tar -cf demo-${APP}.tar ${APP}-linux .demoscript demo1 demo2
-	cp demo-azx.tar "${HOME}/OneDrive - Microsoft/public/"
+package: .package
+.package: ${APP}
+	rm -f demo-${APP}.tar
+	tar -cf demo-${APP}.tar ${APP} ${APP}-* .demoscript demo1 demo2
+	cp demo-${APP}.tar "${HOME}/OneDrive - Microsoft/public/"
+	touch .package
 
 clean:
 	rm -f ${APP} ${APP}-mac ${APP}-linux ${APP}-win.exe
+	rm -rf .${APP} .package

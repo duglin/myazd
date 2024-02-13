@@ -8,6 +8,8 @@ export PATH=$PATH:$PWD
 
 set -e
 
+# Make sure you set these appropriately and create your RG, Sub, and ACA
+# environment in advance
 RG=default
 SUB=fe108f6a-2bd6-409c-8bfb-8f21dbb7ba0a
 LOC="'East US'"
